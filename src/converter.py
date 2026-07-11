@@ -255,3 +255,8 @@ class PDF2DXFConverter:
         new_y = page_height - y
         
         return (x + x_offset, new_y)
+
+
+if __name__ == "__main__":
+    from cli import main
+    main()
