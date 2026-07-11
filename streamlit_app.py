@@ -274,10 +274,12 @@ with tab_takeoff:
                 except Exception:
                     pass
 
-            fig.canvas.draw()
-            buf = fig.canvas.tostring_rgb()
-            w, h = fig.canvas.get_width_height()
-            img = Image.frombytes("RGB", (w, h), buf)
+            from io import BytesIO
+            buf = BytesIO()
+            fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+            buf.seek(0)
+            img = Image.open(buf).copy()
+            buf.close()
             plt.close(fig)
 
         # ---- Canvas for tracing ----
