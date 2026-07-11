@@ -1,18 +1,21 @@
-import streamlit as st
 import os
+import sys
 import tempfile
 import shutil
-import sys
+import json
 from zipfile import ZipFile
+from pathlib import Path
+
+import streamlit as st
 import fitz
 from PIL import Image, ImageDraw
+import pandas as pd
 
 try:
     from streamlit_drawable_canvas import st_canvas
 except ImportError:
     st_canvas = None
 
-# Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 try:
@@ -21,230 +24,463 @@ except ImportError:
     st.error("Could not import converter. Make sure 'src/converter.py' exists.")
     st.stop()
 
+from src.utils.logging import setup_logging
+from src.models.rooms import Room, ExclusionArea
+from src.heating.polygons import HeatingPolygonGenerator
+from src.heating.strips import WarmsetStripGenerator
+from src.heating.calculator import HeatingCalculator
+from src.report.json_report import JSONReport
+from src.report.xlsx_report import XLSXReport
+from src.report.pdf_report import PDFReport
+
+setup_logging(level="ERROR")
+
 st.set_page_config(
-    page_title="PDF to DXF Converter", 
-    page_icon="📐",
-    menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': None
-    }
+    page_title="Warmset CAD Engine",
+    page_icon="🔥",
+    layout="wide",
+    menu_items={'Get Help': None, 'Report a bug': None, 'About': None}
 )
 
-# Hide Streamlit menu and footer
-hide_menu_style = """
-        <style>
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
-        </style>
-        """
-st.markdown(hide_menu_style, unsafe_allow_html=True)
+hide_menu = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+"""
+st.markdown(hide_menu, unsafe_allow_html=True)
 
-st.title("📐 PDF to DXF Converter")
-st.markdown("""
-Convert your PDF drawings to DXF format for CAD software.
-""")
+tab_convert, tab_takeoff = st.tabs(["📐 PDF → DXF", "🔥 Warmset Takeoff"])
 
-uploaded_files = st.file_uploader("Choose PDF file(s)", type="pdf", accept_multiple_files=True)
+# ============================================================
+# TAB 1: PDF → DXF Converter (existing functionality)
+# ============================================================
 
-# Sidebar Options
-st.sidebar.header("Extract Content")
-include_geom = st.sidebar.checkbox("Geometry", True)
-include_text = st.sidebar.checkbox("Text", True)
+with tab_convert:
+    st.title("📐 PDF to DXF Converter")
+    st.markdown("Convert PDF drawings to DXF format.")
 
-st.sidebar.header("Filter Geometries")
-skip_curves = st.sidebar.checkbox("Skip Curved Geometries (Bezier/Splines)", False)
-min_size = st.sidebar.number_input("Minimum Size (points)", 0.0, 99999.0, 0.0, 1.0)
+    uploaded_files = st.file_uploader("Choose PDF file(s)", type="pdf", accept_multiple_files=True, key="conv_files")
 
-st.sidebar.header("Page Range")
-process_all = st.sidebar.checkbox("Process all pages", True)
-if not process_all:
-    col1, col2 = st.sidebar.columns(2)
-    page_from = col1.number_input("From", 1, 99999, 1)
-    page_to = col2.number_input("To", 1, 99999, 99999)
-else:
-    page_from = 1
-    page_to = 99999
+    with st.sidebar:
+        st.header("Extract Content")
+        include_geom = st.checkbox("Geometry", True)
+        include_text = st.checkbox("Text", True)
+        st.header("Filter")
+        skip_curves = st.checkbox("Skip Curves", False)
+        min_size = st.number_input("Min Size (pts)", 0.0, 99999.0, 0.0, 1.0)
+        st.header("Pages")
+        all_pages = st.checkbox("All pages", True)
+        if not all_pages:
+            c1, c2 = st.columns(2)
+            pg_from = c1.number_input("From", 1, 99999, 1)
+            pg_to = c2.number_input("To", 1, 99999, 99999)
+        else:
+            pg_from, pg_to = 1, 99999
 
-if "crop_rect" not in st.session_state:
-    st.session_state.crop_rect = None
+    if "crop_rect" not in st.session_state:
+        st.session_state.crop_rect = None
 
-crop_rect = st.session_state.crop_rect
+    if uploaded_files:
+        st.markdown("### Preview & Crop")
+        preview_name = st.selectbox("File", [f.name for f in uploaded_files])
+        file_obj = next(f for f in uploaded_files if f.name == preview_name)
+        file_obj.seek(0)
 
-if uploaded_files:
-    st.markdown("### Preview & Crop")
-    preview_file_name = st.selectbox("Select file to preview", [f.name for f in uploaded_files])
-    file_obj = next(f for f in uploaded_files if f.name == preview_file_name)
-    
-    try:
-        doc = fitz.open(stream=file_obj.read(), filetype="pdf")
-        total_pages = len(doc)
-        preview_page_num = st.number_input("Page to preview", 1, total_pages, 1) - 1
-        page = doc[preview_page_num]
-        page_w, page_h = page.rect.width, page.rect.height
-        
-        enable_crop = st.checkbox("Enable Crop Region")
-        
-        if enable_crop and st_canvas is not None:
-            st.info("Draw a rectangle on the image below to set the crop region. Only the last drawn rectangle will be used.")
-            
-            # Calculate scale to fit canvas comfortably in the UI
-            display_scale = min(1.0, 700.0 / page_w)
+        try:
+            doc = fitz.open(stream=file_obj.read(), filetype="pdf")
+            total = len(doc)
+            page_num = st.number_input("Page", 1, total, 1) - 1
+            page = doc[page_num]
+            pw, ph = page.rect.width, page.rect.height
+
+            enable_crop = st.checkbox("Crop region")
+            if enable_crop and st_canvas is not None:
+                scale = min(1.0, 700.0 / pw)
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+                canvas = st_canvas(
+                    fill_color="rgba(255,0,0,0.3)", stroke_width=2,
+                    stroke_color="red", background_image=img,
+                    update_streamlit=True, height=img.height, width=img.width,
+                    drawing_mode="rect", key="crop_canvas",
+                )
+                if canvas.json_data and canvas.json_data["objects"]:
+                    obj = canvas.json_data["objects"][-1]
+                    x, y = obj["left"], obj["top"]
+                    w, h = obj["width"] * obj["scaleX"], obj["height"] * obj["scaleY"]
+                    x1, x2 = min(x, x + w), max(x, x + w)
+                    y1, y2 = min(y, y + h), max(y, y + h)
+                    crop = (
+                        max(0, x1 / scale), max(0, y1 / scale),
+                        min(pw, x2 / scale), min(ph, y2 / scale),
+                    )
+                    st.session_state.crop_rect = crop if crop[0] < crop[2] and crop[1] < crop[3] else None
+            elif enable_crop:
+                st.warning("Install streamlit-drawable-canvas for crop UI.")
+
+            doc.close()
+        except Exception as e:
+            st.error(f"Preview error: {e}")
+        finally:
+            file_obj.seek(0)
+
+        if st.button("Convert to DXF"):
+            with st.spinner("Converting..."):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    prog = st.progress(0)
+                    for idx, f_obj in enumerate(uploaded_files):
+                        inpath = os.path.join(tmpdir, f_obj.name)
+                        with open(inpath, "wb") as f:
+                            f.write(f_obj.getbuffer())
+                        base = os.path.splitext(f_obj.name)[0]
+                        outpath = os.path.join(tmpdir, f"{base}.dxf")
+                        try:
+                            d = fitz.open(inpath)
+                            n = len(d)
+                            d.close()
+                            p1 = max(1, pg_from)
+                            p2 = min(n, pg_to)
+                            pages = list(range(p1 - 1, p2))
+                            if pages:
+                                PDF2DXFConverter(inpath).convert(
+                                    outpath, pages=pages,
+                                    crop_rect=st.session_state.crop_rect,
+                                    min_size=min_size, skip_curves=skip_curves,
+                                    include_geom=include_geom, include_text=include_text,
+                                )
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                        prog.progress((idx + 1) / len(uploaded_files))
+
+                    dxfs = [f for f in os.listdir(tmpdir) if f.endswith(".dxf")]
+                    if not dxfs:
+                        st.error("No DXF generated.")
+                    elif len(dxfs) == 1:
+                        with open(os.path.join(tmpdir, dxfs[0]), "rb") as f:
+                            st.download_button("Download DXF", f, dxfs[0], "application/dxf")
+                        st.success("Done!")
+                    else:
+                        zippath = os.path.join(tmpdir, "dxfs.zip")
+                        with ZipFile(zippath, "w") as z:
+                            for f in dxfs:
+                                z.write(os.path.join(tmpdir, f), f)
+                        with open(zippath, "rb") as f:
+                            st.download_button("Download All (ZIP)", f, "dxfs.zip", "application/zip")
+                        st.success(f"{len(dxfs)} files generated.")
+
+# ============================================================
+# TAB 2: Warmset Takeoff (interactive room tracing)
+# ============================================================
+
+with tab_takeoff:
+    st.title("🔥 Warmset Takeoff")
+    st.markdown("Trace rooms and exclusions on your plan, then generate a heating report.")
+
+    uploaded = st.file_uploader("Upload PDF or DXF", type=["pdf", "dxf"], key="takeoff_file")
+
+    if uploaded:
+        # Save to temp
+        suffix = os.path.splitext(uploaded.name)[1].lower()
+        tmpdir = tempfile.mkdtemp()
+        tmppath = os.path.join(tmpdir, f"input{suffix}")
+        with open(tmppath, "wb") as f:
+            f.write(uploaded.getbuffer())
+
+        # Render page to image for tracing
+        if suffix == ".pdf":
+            doc = fitz.open(tmppath)
+            page = doc[0]
+            pw, ph = page.rect.width, page.rect.height
+            display_scale = min(1.0, 1000.0 / pw)
             pix = page.get_pixmap(matrix=fitz.Matrix(display_scale, display_scale), alpha=False)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            
+            # pixel → mm: 1 pt = 25.4/72 mm → pixel at scale → pt = pixel/scale → mm
+            pixel_to_mm = 1.0 / display_scale * 25.4 / 72.0
+            doc.close()
+        else:
+            # DXF — render via matplotlib
+            import ezdxf
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            from src.cad.units import UnitDetector
+
+            doc = ezdxf.readfile(tmppath)
+            detector = UnitDetector(doc)
+            unit = detector.detect()
+            msp = doc.modelspace()
+            xs, ys = [], []
+            for e in msp:
+                try:
+                    b = e.bbox()
+                    if b:
+                        xs += [b.extmin.x, b.extmax.x]
+                        ys += [b.extmin.y, b.extmax.y]
+                except Exception:
+                    pass
+            if not xs:
+                st.error("No geometry in DXF")
+                st.stop()
+            minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+            margin = (maxx - minx) * 0.05 or 10
+            bounds = (minx - margin, maxx + margin, miny - margin, maxy + margin)
+
+            fig, ax = plt.subplots(figsize=(12, 9))
+            ax.set_xlim(bounds[0], bounds[1])
+            ax.set_ylim(bounds[2], bounds[3])
+            ax.set_aspect("equal")
+            ax.axis("off")
+            for e in msp:
+                try:
+                    if e.dxftype() == "LINE":
+                        ax.plot([e.dxf.start.x, e.dxf.end.x], [e.dxf.start.y, e.dxf.end.y],
+                                "k-", lw=0.3, alpha=0.6)
+                    elif e.dxftype() == "LWPOLYLINE":
+                        pts = e.get_points("xy")
+                        px = [p[0] for p in pts] + [pts[0][0]]
+                        py = [p[1] for p in pts] + [pts[0][1]]
+                        ax.plot(px, py, "k-", lw=0.3, alpha=0.6)
+                except Exception:
+                    pass
+            fig.canvas.draw()
+            buf = fig.canvas.buffer_rgba()
+            img = Image.fromarray(buf)
+            plt.close(fig)
+            display_scale = 1.0
+            pixel_to_mm = None  # DXF uses bounds-based mapping
+
+        st.markdown("### 1. Trace Room Polygons")
+        st.markdown(
+            "Draw polygons on the plan. Use **polygon mode** to click corners. "
+            "After drawing, label each room below."
+        )
+
+        c1, c2 = st.columns([3, 1])
+
+        with c1:
+            # Drawing mode toggle
+            draw_mode = st.radio(
+                "Drawing mode",
+                ["polygon", "rect", "freeform"],
+                horizontal=True,
+                key="draw_mode",
+            )
+            stroke = st.color_picker("Stroke", "#00FF00", key="stroke_col")
+
             canvas_result = st_canvas(
-                fill_color="rgba(255, 0, 0, 0.3)",
+                fill_color="rgba(0, 255, 0, 0.15)",
                 stroke_width=2,
-                stroke_color="rgba(255, 0, 0, 1)",
+                stroke_color=stroke,
                 background_image=img,
                 update_streamlit=True,
                 height=img.height,
                 width=img.width,
-                drawing_mode="rect",
-                key="crop_canvas",
+                drawing_mode=draw_mode,
+                key="trace_canvas",
             )
-            
-            if canvas_result.json_data is not None and len(canvas_result.json_data["objects"]) > 0:
-                obj = canvas_result.json_data["objects"][-1]
-                x = obj["left"]
-                y = obj["top"]
-                w = obj["width"] * obj["scaleX"]
-                h = obj["height"] * obj["scaleY"]
-                
-                # Handle negative widths/heights (when dragged bottom-right to top-left)
-                x1, x2 = min(x, x + w), max(x, x + w)
-                y1, y2 = min(y, y + h), max(y, y + h)
-                
-                # Clamp coordinates to page boundaries
-                crop_left = max(0.0, x1 / display_scale)
-                crop_top = max(0.0, y1 / display_scale)
-                crop_right = min(float(page_w), x2 / display_scale)
-                crop_bottom = min(float(page_h), y2 / display_scale)
-                
-                if crop_left < crop_right and crop_top < crop_bottom:
-                    crop_rect = (crop_left, crop_top, crop_right, crop_bottom)
-                else:
-                    crop_rect = None
+
+        with c2:
+            st.markdown("#### Rooms")
+            if "rooms" not in st.session_state:
+                st.session_state.rooms = []
+
+            # Extract polygons from canvas
+            if canvas_result and canvas_result.json_data and canvas_result.json_data["objects"]:
+                objects = canvas_result.json_data["objects"]
+                st.caption(f"{len(objects)} shapes drawn")
+
+                # Convert canvas objects to rooms
+                st.session_state.rooms = []
+                for obj in objects:
+                    if obj["type"] == "polygon":
+                        pts = obj["points"]
+                        # Convert canvas coords to mm/DXF units
+                        if pixel_to_mm is not None:
+                            verts = [(p["x"] * pixel_to_mm, p["y"] * pixel_to_mm) for p in pts]
+                        else:
+                            # Map pixel → DXF coord
+                            iw, ih = img.width, img.height
+                            bx0, bx1, by0, by1 = bounds
+                            dx = (bx1 - bx0) / iw
+                            dy = (by1 - by0) / ih
+                            verts = [(bx0 + p["x"] * dx, by0 + p["y"] * dy) for p in pts]
+
+                        from shapely.geometry import Polygon
+                        try:
+                            poly = Polygon(verts)
+                            area = poly.area
+                            # Convert to metres
+                            if pixel_to_mm is not None:
+                                area_m = area / 1_000_000  # mm² → m²
+                                verts_m = [(x / 1000, y / 1000) for x, y in verts]
+                            else:
+                                area_m = area * (unit.to_metres ** 2)
+                                verts_m = [(x * unit.to_metres, y * unit.to_metres) for x, y in verts]
+
+                            st.session_state.rooms.append({
+                                "name": "",
+                                "vertices": verts_m,
+                                "area_m2": round(area_m, 2),
+                                "is_exclusion": False,
+                            })
+                        except Exception:
+                            pass
+
             else:
-                crop_rect = None
-                
-            st.session_state.crop_rect = crop_rect
+                st.info("Draw shapes on the plan → they appear here")
 
-        else:
-            if enable_crop and st_canvas is None:
-                st.warning("Please install `streamlit-drawable-canvas` (`pip install streamlit-drawable-canvas`) to enable mouse dragging. Falling back to sliders.")
-                col1, col2 = st.columns(2)
-                with col1:
-                    crop_left = st.slider("Left Margin", 0.0, float(page_w), 0.0)
-                    crop_right = st.slider("Right Margin", 0.0, float(page_w), float(page_w))
-                with col2:
-                    crop_top = st.slider("Top Margin", 0.0, float(page_h), 0.0)
-                    crop_bottom = st.slider("Bottom Margin", 0.0, float(page_h), float(page_h))
-                    
-                if crop_left < crop_right and crop_top < crop_bottom:
-                    crop_rect = (crop_left, crop_top, crop_right, crop_bottom)
-                else:
-                    st.warning("Invalid crop region. Left must be < Right, Top must be < Bottom.")
-                    crop_rect = None
-                    
-            st.session_state.crop_rect = crop_rect
+        # ---- Room labels ----
+        if st.session_state.rooms:
+            st.markdown("### 2. Label Rooms")
 
-            # Render image statically (fallback or no crop)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            
-            if crop_rect and enable_crop:
-                draw = ImageDraw.Draw(img, "RGBA")
-                scale = 2.0
-                draw.rectangle(
-                    [crop_rect[0]*scale, crop_rect[1]*scale, crop_rect[2]*scale, crop_rect[3]*scale],
-                    outline=(255, 0, 0, 255), width=4, fill=(255, 0, 0, 40)
-                )
-                
-            st.image(img, use_container_width=True)
-            
-        doc.close()
-    except Exception as e:
-        st.error(f"Could not render preview: {e}")
-    finally:
-        file_obj.seek(0)
-        
-    if not include_geom and not include_text:
-        st.warning("Please select at least one content type to extract (Geometry or Text) in the sidebar.")
-    
-    elif st.button("Convert to DXF"):
-        with st.spinner("Converting..."):
-            with tempfile.TemporaryDirectory() as tmpdirname:
-                progress_bar = st.progress(0)
-                total_files = len(uploaded_files)
-                
-                for idx, f_obj in enumerate(uploaded_files):
-                    input_path = os.path.join(tmpdirname, f_obj.name)
-                    with open(input_path, "wb") as f:
-                        f.write(f_obj.getbuffer())
-                        
-                    base_name = os.path.splitext(f_obj.name)[0]
-                    output_path = os.path.join(tmpdirname, f"{base_name}.dxf")
-                    
-                    try:
-                        doc = fitz.open(input_path)
-                        total_pages_file = len(doc)
-                        doc.close()
-                        
-                        p_from = max(1, page_from)
-                        p_to = min(total_pages_file, page_to)
-                        pages_list = list(range(p_from - 1, p_to))
-                        
-                        if pages_list:
-                            converter = PDF2DXFConverter(input_path)
-                            converter.convert(
-                                output_path=output_path,
-                                pages=pages_list,
-                                crop_rect=crop_rect,
-                                min_size=min_size,
-                                skip_curves=skip_curves,
-                                include_geom=include_geom,
-                                include_text=include_text
-                            )
-                    except Exception as e:
-                        st.error(f"Error converting {f_obj.name}: {e}")
-                        
-                    progress_bar.progress((idx + 1) / total_files)
-                    
-                # Check what was generated (handle multi-page)
-                generated_files = [f for f in os.listdir(tmpdirname) if f.endswith(".dxf")]
-                
-                if not generated_files:
-                    st.error("No DXF files were generated.")
-                elif len(generated_files) == 1:
-                    # Single file download
-                    file_path = os.path.join(tmpdirname, generated_files[0])
-                    with open(file_path, "rb") as f:
-                        st.download_button(
-                            label="Download DXF",
-                            data=f,
-                            file_name=generated_files[0],
-                            mime="application/dxf"
+            for i, room in enumerate(st.session_state.rooms):
+                c1, c2, c3 = st.columns([3, 1, 1])
+                with c1:
+                    name = c1.text_input(
+                        f"Room {i+1} ({room['area_m2']} m²)",
+                        value=room["name"],
+                        key=f"name_{i}",
+                    )
+                    st.session_state.rooms[i]["name"] = name
+                with c2:
+                    excl = c2.checkbox("Exclusion", value=room["is_exclusion"], key=f"excl_{i}")
+                    st.session_state.rooms[i]["is_exclusion"] = excl
+                with c3:
+                    if c3.button("🗑", key=f"del_{i}"):
+                        st.session_state.rooms.pop(i)
+                        st.rerun()
+
+        # ---- Run engine ----
+        if st.session_state.rooms:
+            st.markdown("### 3. Generate Report")
+
+            if st.button("🔥 Run Warmset Engine", type="primary"):
+                with st.spinner("Calculating..."):
+                    engine_rooms = []
+
+                    for r in st.session_state.rooms:
+                        from shapely.geometry import Polygon as SPolygon
+                        poly = SPolygon(r["vertices"])
+                        if r["is_exclusion"]:
+                            continue
+                        room = Room(
+                            name=r["name"] or "Unknown",
+                            polygon=poly,
+                            centroid=(poly.centroid.x, poly.centroid.y),
+                            bounding_box=poly.bounds,
+                            confidence=0.95,
+                            gross_area_m2=poly.area,
                         )
-                    st.success("Conversion successful!")
-                else:
-                    # Multiple files - Zip them
-                    zip_filename = "converted_files.zip"
-                    zip_path = os.path.join(tmpdirname, zip_filename)
-                    with ZipFile(zip_path, 'w') as zipObj:
-                        for file in generated_files:
-                            zipObj.write(os.path.join(tmpdirname, file), file)
-                    
-                    with open(zip_path, "rb") as f:
-                        st.download_button(
-                            label="Download All (ZIP)",
-                            data=f,
-                            file_name=zip_filename,
-                            mime="application/zip"
-                        )
-                    st.success(f"Conversion successful! Generated {len(generated_files)} files.")
+                        # Add other rooms as exclusions if marked
+                        for other in st.session_state.rooms:
+                            if other["is_exclusion"] and other["name"]:
+                                try:
+                                    other_poly = SPolygon(other["vertices"])
+                                    if other_poly.intersects(poly) or poly.contains(other_poly):
+                                        room.exclusions.append(ExclusionArea(
+                                            polygon=other_poly,
+                                            reason=other["name"],
+                                            source_type="manual",
+                                        ))
+                                except Exception:
+                                    pass
+                        engine_rooms.append(room)
 
-st.markdown("---")
-st.markdown("Powered by **PyMuPDF** and **ezdxf**.")
+                    if not engine_rooms:
+                        st.error("No rooms to process (all marked as exclusion?)")
+                        st.stop()
+
+                    # Run pipeline
+                    poly_gen = HeatingPolygonGenerator()
+                    strip_gen = WarmsetStripGenerator()
+                    calculator = HeatingCalculator()
+
+                    engine_rooms = poly_gen.generate(engine_rooms)
+                    engine_rooms = strip_gen.generate(engine_rooms)
+                    engine_rooms = calculator.calculate(engine_rooms)
+                    totals = calculator.totals(engine_rooms)
+
+                    quality = {
+                        "suitability_score": 95, "reconstruction_confidence": 95,
+                        "verdict": "User-traced geometry", "drawing_units": "m", "dxf_version": "N/A",
+                    }
+
+                    # Save reports
+                    outdir = Path(tmpdir) / "reports"
+                    outdir.mkdir(exist_ok=True)
+                    JSONReport().generate(engine_rooms, quality, totals, outdir / "report.json")
+                    XLSXReport().generate(engine_rooms, totals, outdir / "report.xlsx")
+                    PDFReport().generate(engine_rooms, totals, quality, outdir / "report.pdf")
+
+                    st.success(f"✅ Takeoff complete — {len(engine_rooms)} rooms processed")
+                    st.balloons()
+
+                    # ---- Results ----
+                    st.markdown("### Results")
+
+                    # Summary table
+                    rows = []
+                    for room in engine_rooms:
+                        rows.append({
+                            "Room": room.name,
+                            "Gross m²": round(room.gross_area_m2, 2),
+                            "Excluded m²": round(room.excluded_area_m2, 2),
+                            "Setback m²": round(room.setback_area_m2, 2),
+                            "Net m²": round(room.net_heatable_area_m2, 2),
+                            "Strips": room.strip_count,
+                            "Linear m": round(room.total_linear_m, 1),
+                            "Mat m²": round(room.mat_area_m2, 2),
+                            "Coverage": f"{room.coverage_pct:.0f}%",
+                        })
+                    df = pd.DataFrame(rows)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+                    # Totals
+                    tc1, tc2, tc3, tc4 = st.columns(4)
+                    tc1.metric("Total Gross", f"{totals['total_gross_area_m2']:.1f} m²")
+                    tc2.metric("Total Net", f"{totals['total_net_heatable_area_m2']:.1f} m²")
+                    tc3.metric("Total Mat", f"{totals['total_mat_area_m2']:.1f} m²")
+                    tc4.metric("Total Linear", f"{totals['total_linear_m']:.0f} m")
+
+                    # Per-room breakdown
+                    with st.expander("📋 Detailed breakdown per room", expanded=True):
+                        for room in engine_rooms:
+                            if room.calculation:
+                                st.text(room.calculation.to_text_block(room.name))
+                            st.divider()
+
+                    # Download buttons
+                    d1, d2, d3, d4 = st.columns(4)
+                    with open(outdir / "report.json") as f:
+                        d1.download_button("📄 JSON", f, "report.json", "application/json")
+                    with open(outdir / "report.xlsx", "rb") as f:
+                        d2.download_button("📊 Excel", f, "report.xlsx",
+                                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    with open(outdir / "report.pdf", "rb") as f:
+                        d3.download_button("📕 PDF Report", f, "report.pdf", "application/pdf")
+
+                    # Save trace data for reuse
+                    trace_data = {
+                        "rooms": [
+                            {
+                                "name": r["name"],
+                                "vertices": [[round(v, 4) for v in vert] for vert in r["vertices"]],
+                                "is_exclusion": r["is_exclusion"],
+                                "area_m2": r["area_m2"],
+                            }
+                            for r in st.session_state.rooms
+                        ]
+                    }
+                    trace_json = json.dumps(trace_data, indent=2)
+                    d4.download_button("📋 Traced Rooms (JSON)", trace_json, "traced_rooms.json", "application/json")
+
+                    # Clear button
+                    if st.button("🔄 Start Over"):
+                        st.session_state.rooms = []
+                        st.rerun()
+
+    st.markdown("---")
+    st.caption("Trace rooms → Warmset engine calculates setbacks, strips, and coverage.")
