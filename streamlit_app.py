@@ -182,14 +182,17 @@ with tab_takeoff:
     uploaded = st.file_uploader("Upload PDF or DXF", type=["pdf", "dxf"], key="takeoff_file")
 
     if uploaded:
-        # Save to temp
         suffix = os.path.splitext(uploaded.name)[1].lower()
         tmpdir = tempfile.mkdtemp()
         tmppath = os.path.join(tmpdir, f"input{suffix}")
         with open(tmppath, "wb") as f:
             f.write(uploaded.getbuffer())
 
-        # Render page to image for tracing
+        # ---- Render display image ----
+        pixel_to_mm = None
+        bounds = None
+        unit_to_m = None
+
         if suffix == ".pdf":
             doc = fitz.open(tmppath)
             page = doc[0]
@@ -197,11 +200,9 @@ with tab_takeoff:
             display_scale = min(1.0, 1000.0 / pw)
             pix = page.get_pixmap(matrix=fitz.Matrix(display_scale, display_scale), alpha=False)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            # pixel → mm: 1 pt = 25.4/72 mm → pixel at scale → pt = pixel/scale → mm
             pixel_to_mm = 1.0 / display_scale * 25.4 / 72.0
             doc.close()
         else:
-            # DXF — render via matplotlib
             import ezdxf
             import matplotlib
             matplotlib.use("Agg")
@@ -211,19 +212,41 @@ with tab_takeoff:
             doc = ezdxf.readfile(tmppath)
             detector = UnitDetector(doc)
             unit = detector.detect()
+            unit_to_m = unit.to_metres
             msp = doc.modelspace()
+
+            # Collect all coordinates directly (avoid bbox() which fails on most types)
             xs, ys = [], []
             for e in msp:
                 try:
-                    b = e.bbox()
-                    if b:
-                        xs += [b.extmin.x, b.extmax.x]
-                        ys += [b.extmin.y, b.extmax.y]
+                    t = e.dxftype()
+                    if t == "LINE":
+                        xs += [e.dxf.start.x, e.dxf.end.x]
+                        ys += [e.dxf.start.y, e.dxf.end.y]
+                    elif t == "LWPOLYLINE":
+                        for p in e.get_points("xy"):
+                            xs.append(p[0]); ys.append(p[1])
+                    elif t == "CIRCLE":
+                        xs.append(e.dxf.center.x - e.dxf.radius)
+                        xs.append(e.dxf.center.x + e.dxf.radius)
+                        ys.append(e.dxf.center.y - e.dxf.radius)
+                        ys.append(e.dxf.center.y + e.dxf.radius)
+                    elif t == "ARC":
+                        xs.append(e.dxf.center.x - e.dxf.radius)
+                        xs.append(e.dxf.center.x + e.dxf.radius)
+                        ys.append(e.dxf.center.y - e.dxf.radius)
+                        ys.append(e.dxf.center.y + e.dxf.radius)
+                    elif t == "MTEXT":
+                        xs.append(e.dxf.insert.x); ys.append(e.dxf.insert.y)
+                    elif t == "TEXT":
+                        xs.append(e.dxf.insert.x); ys.append(e.dxf.insert.y)
                 except Exception:
                     pass
+
             if not xs:
-                st.error("No geometry in DXF")
+                st.error("Could not determine drawing extents")
                 st.stop()
+
             minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
             margin = (maxx - minx) * 0.05 or 10
             bounds = (minx - margin, maxx + margin, miny - margin, maxy + margin)
@@ -233,104 +256,148 @@ with tab_takeoff:
             ax.set_ylim(bounds[2], bounds[3])
             ax.set_aspect("equal")
             ax.axis("off")
+
             for e in msp:
                 try:
-                    if e.dxftype() == "LINE":
+                    t = e.dxftype()
+                    if t == "LINE":
                         ax.plot([e.dxf.start.x, e.dxf.end.x], [e.dxf.start.y, e.dxf.end.y],
                                 "k-", lw=0.3, alpha=0.6)
-                    elif e.dxftype() == "LWPOLYLINE":
+                    elif t == "LWPOLYLINE":
                         pts = e.get_points("xy")
                         px = [p[0] for p in pts] + [pts[0][0]]
                         py = [p[1] for p in pts] + [pts[0][1]]
                         ax.plot(px, py, "k-", lw=0.3, alpha=0.6)
+                    elif t in ("CIRCLE", "ARC"):
+                        c = e.dxf.center
+                        ax.plot(c.x, c.y, "k.", markersize=1, alpha=0.3)
                 except Exception:
                     pass
+
             fig.canvas.draw()
             buf = fig.canvas.buffer_rgba()
             img = Image.fromarray(buf)
             plt.close(fig)
-            display_scale = 1.0
-            pixel_to_mm = None  # DXF uses bounds-based mapping
 
-        st.markdown("### 1. Trace Room Polygons")
+        # ---- Canvas for tracing ----
+        st.markdown("### 1. Trace Rooms")
         st.markdown(
-            "Draw polygons on the plan. Use **polygon mode** to click corners. "
-            "After drawing, label each room below."
+            "Select **freeform** or **polygon** mode, then draw on the plan. "
+            "Each shape becomes a room or exclusion below."
         )
 
-        c1, c2 = st.columns([3, 1])
+        draw_mode = st.radio(
+            "Draw mode", ["polygon", "freeform", "rect"],
+            horizontal=True, index=0,
+        )
 
-        with c1:
-            # Drawing mode toggle
-            draw_mode = st.radio(
-                "Drawing mode",
-                ["polygon", "rect", "freeform"],
-                horizontal=True,
-                key="draw_mode",
-            )
-            stroke = st.color_picker("Stroke", "#00FF00", key="stroke_col")
+        canvas_result = st_canvas(
+            fill_color="rgba(0, 200, 0, 0.12)",
+            stroke_width=3,
+            stroke_color="#00CC00",
+            background_image=img,
+            update_streamlit=True,
+            height=min(img.height, 800),
+            width=min(img.width, 1200),
+            drawing_mode=draw_mode,
+            key="trace_canvas",
+        )
 
-            canvas_result = st_canvas(
-                fill_color="rgba(0, 255, 0, 0.15)",
-                stroke_width=2,
-                stroke_color=stroke,
-                background_image=img,
-                update_streamlit=True,
-                height=img.height,
-                width=img.width,
-                drawing_mode=draw_mode,
-                key="trace_canvas",
-            )
+        # ---- Extract shapes from canvas ----
+        if "rooms" not in st.session_state:
+            st.session_state.rooms = []
 
-        with c2:
-            st.markdown("#### Rooms")
-            if "rooms" not in st.session_state:
-                st.session_state.rooms = []
+        if canvas_result and canvas_result.json_data and canvas_result.json_data.get("objects"):
+            objects = canvas_result.json_data["objects"]
+            new_rooms = []
 
-            # Extract polygons from canvas
-            if canvas_result and canvas_result.json_data and canvas_result.json_data["objects"]:
-                objects = canvas_result.json_data["objects"]
-                st.caption(f"{len(objects)} shapes drawn")
+            for obj in objects:
+                obj_type = obj.get("type", "")
+                raw_pts = None
 
-                # Convert canvas objects to rooms
-                st.session_state.rooms = []
-                for obj in objects:
-                    if obj["type"] == "polygon":
-                        pts = obj["points"]
-                        # Convert canvas coords to mm/DXF units
-                        if pixel_to_mm is not None:
-                            verts = [(p["x"] * pixel_to_mm, p["y"] * pixel_to_mm) for p in pts]
-                        else:
-                            # Map pixel → DXF coord
-                            iw, ih = img.width, img.height
-                            bx0, bx1, by0, by1 = bounds
-                            dx = (bx1 - bx0) / iw
-                            dy = (by1 - by0) / ih
-                            verts = [(bx0 + p["x"] * dx, by0 + p["y"] * dy) for p in pts]
+                if obj_type == "polygon" and "points" in obj:
+                    raw_pts = obj["points"]
+                elif obj_type == "path" and "path" in obj:
+                    # freeform path -> extract points from path commands
+                    pts = []
+                    for cmd in obj["path"]:
+                        if len(cmd) >= 3:
+                            pts.append((cmd[1], cmd[2]))
+                        elif len(cmd) >= 1 and cmd[0] in ("M", "L"):
+                            continue
+                    if len(pts) >= 3:
+                        raw_pts = [{"x": p[0], "y": p[1]} for p in pts]
+                elif obj_type == "rect" and "left" in obj:
+                    x, y = obj["left"], obj["top"]
+                    w = obj["width"] * obj.get("scaleX", 1)
+                    h = obj["height"] * obj.get("scaleY", 1)
+                    raw_pts = [
+                        {"x": x, "y": y},
+                        {"x": x + w, "y": y},
+                        {"x": x + w, "y": y + h},
+                        {"x": x, "y": y + h},
+                    ]
 
-                        from shapely.geometry import Polygon
-                        try:
-                            poly = Polygon(verts)
-                            area = poly.area
-                            # Convert to metres
+                if raw_pts and len(raw_pts) >= 3:
+                    if pixel_to_mm is not None:
+                        verts = [(p["x"] * pixel_to_mm, p["y"] * pixel_to_mm) for p in raw_pts]
+                    elif bounds is not None:
+                        iw, ih = img.width, img.height
+                        bx0, bx1, by0, by1 = bounds
+                        dx = (bx1 - bx0) / iw
+                        dy = (by1 - by0) / ih
+                        verts = [(bx0 + p["x"] * dx, by0 + p["y"] * dy) for p in raw_pts]
+                    else:
+                        verts = [(p["x"], p["y"]) for p in raw_pts]
+
+                    from shapely.geometry import Polygon as SPolygon
+                    try:
+                        poly = SPolygon(verts)
+                        if poly.is_valid and poly.area > 0.01:
                             if pixel_to_mm is not None:
-                                area_m = area / 1_000_000  # mm² → m²
+                                area_m = poly.area / 1_000_000
                                 verts_m = [(x / 1000, y / 1000) for x, y in verts]
+                            elif unit_to_m is not None:
+                                area_m = poly.area * (unit_to_m ** 2)
+                                verts_m = [(x * unit_to_m, y * unit_to_m) for x, y in verts]
                             else:
-                                area_m = area * (unit.to_metres ** 2)
-                                verts_m = [(x * unit.to_metres, y * unit.to_metres) for x, y in verts]
+                                area_m = poly.area
+                                verts_m = verts
 
-                            st.session_state.rooms.append({
+                            new_rooms.append({
                                 "name": "",
                                 "vertices": verts_m,
                                 "area_m2": round(area_m, 2),
                                 "is_exclusion": False,
                             })
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
-            else:
-                st.info("Draw shapes on the plan → they appear here")
+            if new_rooms:
+                st.session_state.rooms = new_rooms
+
+        st.caption(f"**{len(st.session_state.rooms)}** shape(s) on canvas")
+
+        # ---- Room labels ----
+        if st.session_state.rooms:
+            st.markdown("### 2. Label Rooms")
+            st.markdown("Name each room and mark islands/cabinets as **Exclusion**.")
+
+            for i, room in enumerate(st.session_state.rooms):
+                cols = st.columns([3, 1, 0.5])
+                with cols[0]:
+                    room["name"] = cols[0].text_input(
+                        f"Shape {i+1} ({room['area_m2']} m²)",
+                        value=room["name"], key=f"name_{i}",
+                    )
+                with cols[1]:
+                    room["is_exclusion"] = cols[1].checkbox(
+                        "Exclusion", value=room["is_exclusion"], key=f"excl_{i}",
+                    )
+                with cols[2]:
+                    if cols[2].button("✕", key=f"del_{i}"):
+                        st.session_state.rooms.pop(i)
+                        st.rerun()
 
         # ---- Room labels ----
         if st.session_state.rooms:
