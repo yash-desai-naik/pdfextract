@@ -275,8 +275,9 @@ with tab_takeoff:
                     pass
 
             fig.canvas.draw()
-            buf = fig.canvas.buffer_rgba()
-            img = Image.fromarray(buf)
+            buf = fig.canvas.tostring_rgb()
+            w, h = fig.canvas.get_width_height()
+            img = Image.frombytes("RGB", (w, h), buf)
             plt.close(fig)
 
         # ---- Canvas for tracing ----
