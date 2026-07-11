@@ -1,0 +1,240 @@
+{
+  "generated_at": "2026-07-11T23:58:36.991703",
+  "engine_version": "1.0.0",
+  "quality_analysis": {
+    "suitability_score": 95,
+    "reconstruction_confidence": 95,
+    "verdict": "User-traced geometry",
+    "drawing_units": "m",
+    "dxf_version": "N/A"
+  },
+  "totals": {
+    "total_gross_area_m2": 72.0,
+    "total_excluded_area_m2": 0.81,
+    "total_setback_area_m2": 6.83,
+    "total_net_heatable_area_m2": 64.36,
+    "total_mat_area_m2": 64.153,
+    "total_linear_m": 128.305,
+    "total_strips": 34,
+    "room_count": 3
+  },
+  "rooms": [
+    {
+      "name": "Kitchen",
+      "confidence": 0.95,
+      "confidence_factors": {},
+      "measurements_used": "",
+      "centroid": [
+        2.0,
+        2.0
+      ],
+      "bounding_box": [
+        0.0,
+        0.0,
+        4.0,
+        4.0
+      ],
+      "gross_area_m2": 16.0,
+      "perimeter_m": 16.0,
+      "excluded_area_m2": 0.81,
+      "setback_area_m2": 1.56,
+      "net_heatable_area_m2": 13.63,
+      "strip_count": 14,
+      "total_linear_m": 27.326,
+      "mat_area_m2": 13.663,
+      "coverage_pct": 100.0,
+      "labels": [],
+      "exclusions": [
+        {
+          "reason": "Kitchen — user exclusion",
+          "area_m2": 0.81,
+          "source_type": "manual"
+        }
+      ],
+      "strip_data": {
+        "count": 14,
+        "individual_lengths_m": [
+          0.374,
+          0.566,
+          0.566,
+          1.536,
+          0.566,
+          0.566,
+          4.374,
+          1.536,
+          5.374,
+          4.374,
+          3.374,
+          2.374,
+          1.374,
+          0.374
+        ]
+      },
+      "calculation": {
+        "gross_area_m2": 16.0,
+        "exclusion_breakdown": [
+          {
+            "label": "Kitchen — user exclusion",
+            "area_m2": 0.81
+          }
+        ],
+        "total_excluded_m2": 0.81,
+        "setback_distance_m": 0.1,
+        "setback_area_m2": 1.56,
+        "net_heatable_area_m2": 13.63,
+        "strip_count": 14,
+        "strip_lengths_m": [
+          0.374,
+          0.566,
+          0.566,
+          1.536,
+          0.566,
+          0.566,
+          4.374,
+          1.536,
+          5.374,
+          4.374,
+          3.374,
+          2.374,
+          1.374,
+          0.374
+        ],
+        "total_linear_m": 27.326,
+        "mat_area_m2": 13.663,
+        "coverage_pct": 100.0
+      }
+    },
+    {
+      "name": "Living",
+      "confidence": 0.95,
+      "confidence_factors": {},
+      "measurements_used": "",
+      "centroid": [
+        8.0,
+        3.0
+      ],
+      "bounding_box": [
+        4.0,
+        0.0,
+        12.0,
+        6.0
+      ],
+      "gross_area_m2": 48.0,
+      "perimeter_m": 28.0,
+      "excluded_area_m2": 0.0,
+      "setback_area_m2": 4.11,
+      "net_heatable_area_m2": 43.89,
+      "strip_count": 15,
+      "total_linear_m": 87.798,
+      "mat_area_m2": 43.899,
+      "coverage_pct": 100.0,
+      "labels": [],
+      "exclusions": [],
+      "strip_data": {
+        "count": 15,
+        "individual_lengths_m": [
+          0.891,
+          2.978,
+          5.065,
+          7.152,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.152,
+          5.065,
+          2.978,
+          0.891
+        ]
+      },
+      "calculation": {
+        "gross_area_m2": 48.0,
+        "exclusion_breakdown": [],
+        "total_excluded_m2": 0.0,
+        "setback_distance_m": 0.15,
+        "setback_area_m2": 4.11,
+        "net_heatable_area_m2": 43.89,
+        "strip_count": 15,
+        "strip_lengths_m": [
+          0.891,
+          2.978,
+          5.065,
+          7.152,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.947,
+          7.152,
+          5.065,
+          2.978,
+          0.891
+        ],
+        "total_linear_m": 87.798,
+        "mat_area_m2": 43.899,
+        "coverage_pct": 100.0
+      }
+    },
+    {
+      "name": "Dining",
+      "confidence": 0.95,
+      "confidence_factors": {},
+      "measurements_used": "",
+      "centroid": [
+        2.0,
+        5.0
+      ],
+      "bounding_box": [
+        0.0,
+        4.0,
+        4.0,
+        6.0
+      ],
+      "gross_area_m2": 8.0,
+      "perimeter_m": 12.0,
+      "excluded_area_m2": 0.0,
+      "setback_area_m2": 1.16,
+      "net_heatable_area_m2": 6.84,
+      "strip_count": 5,
+      "total_linear_m": 13.181,
+      "mat_area_m2": 6.59,
+      "coverage_pct": 96.4,
+      "labels": [],
+      "exclusions": [],
+      "strip_data": {
+        "count": 5,
+        "individual_lengths_m": [
+          0.862,
+          3.819,
+          3.819,
+          3.819,
+          0.862
+        ]
+      },
+      "calculation": {
+        "gross_area_m2": 8.0,
+        "exclusion_breakdown": [],
+        "total_excluded_m2": 0.0,
+        "setback_distance_m": 0.1,
+        "setback_area_m2": 1.16,
+        "net_heatable_area_m2": 6.84,
+        "strip_count": 5,
+        "strip_lengths_m": [
+          0.862,
+          3.819,
+          3.819,
+          3.819,
+          0.862
+        ],
+        "total_linear_m": 13.181,
+        "mat_area_m2": 6.59,
+        "coverage_pct": 96.4
+      }
+    }
+  ]
+}
