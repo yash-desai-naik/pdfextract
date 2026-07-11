@@ -71,37 +71,42 @@ class HeatingPolygonGenerator:
         return rooms
 
     def _compute_heating_polygon(self, room: Room) -> HeatingPolygon:
-        """Compute the heating polygon for a single room."""
+        """Compute the heating polygon for a single room.
+
+        Preserves holes (e.g., openings for stairs, lightwells) through
+        the setback operation by applying the buffer to the full polygon
+        including interior rings, then subtracting exclusion areas.
+        """
         # Step 1: Determine setback
         if room.gross_area_m2 > self.large_room_threshold:
             setback = self.large_room_setback
         else:
             setback = self.default_setback
 
-        # Step 2: Inward buffer (setback from walls)
+        # Step 2: Inward buffer (setback from walls) — handles holes automatically
         room_poly = room.polygon
         if room_poly is None:
             return HeatingPolygon()
 
-        # For polygons with holes, we need to handle exterior and holes separately
-        if isinstance(room_poly, Polygon):
-            exterior = Polygon(room_poly.exterior)
-            interior_polys = [Polygon(hole) for hole in room_poly.interiors]
+        # Apply setback to the full polygon (preserves holes via Shapely)
+        setback_poly = room_poly.buffer(-setback)
+        if setback_poly is None or setback_poly.is_empty:
+            return HeatingPolygon(setback_applied=True, setback_distance_m=setback)
 
-            # Apply setback to exterior
-            setback_poly = exterior.buffer(-setback)
-            if setback_poly is None or setback_poly.is_empty:
+        # If setback produced a MultiPolygon with a large main area and tiny islands,
+        # filter to keep the dominant components (area > 1% of max)
+        if isinstance(setback_poly, MultiPolygon):
+            geoms = list(setback_poly.geoms)
+            if not geoms:
                 return HeatingPolygon(setback_applied=True, setback_distance_m=setback)
+            max_area = max(g.area for g in geoms)
+            filtered = [g for g in geoms if g.area > max_area * 0.01]
+            if filtered:
+                setback_poly = MultiPolygon(filtered) if len(filtered) > 1 else filtered[0]
+            else:
+                setback_poly = max(geoms, key=lambda g: g.area)
 
-            if isinstance(setback_poly, MultiPolygon):
-                # Take largest component
-                setback_poly = max(setback_poly.geoms, key=lambda g: g.area)
-        else:
-            setback_poly = room_poly.buffer(-setback)
-            if setback_poly is None or setback_poly.is_empty:
-                return HeatingPolygon(setback_applied=True, setback_distance_m=setback)
-
-        # Step 3: Subtract exclusions
+        # Step 3: Subtract explicitly detected exclusions (cabinetry, wardrobes, etc.)
         if room.exclusions:
             exclusion_union = unary_union([e.polygon for e in room.exclusions if e.polygon is not None])
             if exclusion_union is not None and not exclusion_union.is_empty:

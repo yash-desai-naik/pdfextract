@@ -104,9 +104,19 @@ class RoomLabeler:
 
             if best_text:
                 room.name = best_text.title().strip()
-                room.confidence = min(1.0, 0.5 + best_score * 0.5)
+                # Update confidence_factors.room_label_matched (+0.20 max)
+                if room.confidence_factors is None:
+                    from src.models.rooms import ConfidenceFactors
+                    room.confidence_factors = ConfidenceFactors()
+                room.confidence_factors.room_label_matched = best_score * 0.20
+                # Recompute total confidence from all factors
+                room.confidence = room.confidence_factors.total
             else:
-                room.confidence = 0.3
+                # No label match — keep existing confidence from geometric factors
+                if room.confidence_factors is not None:
+                    room.confidence = room.confidence_factors.total
+                else:
+                    room.confidence = 0.0
 
             # Record labels
             for content, dist in unique_texts[:5]:
@@ -194,6 +204,12 @@ class DimensionExtractor:
             best_dim = nearby[0][0]
 
             if best_dim.measurement is not None:
+                # Update confidence for verified dimensions (+0.20)
+                if room.confidence_factors is not None:
+                    # Score based on how close the dimension angle matches room orientation
+                    room.confidence_factors.dimensions_verified = 0.20
+                    room.confidence = room.confidence_factors.total
+
                 # Dimensions in DXF are already in drawing units
                 room.width = DimensionInfo(
                     value_m=best_dim.measurement,

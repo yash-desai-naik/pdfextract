@@ -17,7 +17,17 @@ from .entities import (
     EntityType,
 )
 
-from .rooms import Room, RoomLabel, DimensionInfo, ExclusionArea, HeatingPolygon, WarmsetStrip
+from .rooms import (
+    Room,
+    RoomLabel,
+    RoomCalculation,
+    DimensionInfo,
+    ExclusionArea,
+    HeatingPolygon,
+    WarmsetStrip,
+    ConfidenceFactors,
+    MeasurementSource,
+)
 
 __all__ = [
     "CADEntity",
@@ -38,8 +48,11 @@ __all__ = [
     "EntityType",
     "Room",
     "RoomLabel",
+    "RoomCalculation",
     "DimensionInfo",
     "ExclusionArea",
     "HeatingPolygon",
     "WarmsetStrip",
+    "ConfidenceFactors",
+    "MeasurementSource",
 ]

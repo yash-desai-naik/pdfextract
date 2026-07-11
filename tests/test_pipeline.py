@@ -402,7 +402,12 @@ class TestCalculator:
                      centroid=(5, 5), bounding_box=(0, 0, 10, 10), confidence=0.7,
                      gross_area_m2=100.0)
         room.gross_area_m2 = 100.0
-        room.excluded_area_m2 = 5.0
+        # Add an exclusion so the calculator can track it
+        from src.models.rooms import ExclusionArea
+        room.exclusions.append(ExclusionArea(
+            polygon=Polygon([(0, 0), (5, 0), (5, 1), (0, 1)]),
+            reason="Test cabinet",
+        ))
         room.heating_polygon = HeatingPolygon(
             polygon=Polygon([(0.1, 0.1), (9.9, 0.1), (9.9, 9.9), (0.1, 9.9)]),
             setback_applied=True,
@@ -415,9 +420,13 @@ class TestCalculator:
         rooms = calculator.calculate([room])
         totals = calculator.totals(rooms)
         assert totals["total_gross_area_m2"] == 100.0
-        assert totals["total_excluded_area_m2"] == 5.0
+        assert totals["total_excluded_area_m2"] == 5.0  # 5m x 1m = 5 m²
         assert totals["total_mat_area_m2"] > 0
         assert totals["room_count"] == 1
+        # Verify calculation breakdown exists
+        assert room.calculation is not None
+        assert len(room.calculation.exclusion_breakdown) == 1
+        assert room.calculation.exclusion_breakdown[0]["area_m2"] == 5.0
 
 
 # ============================================================

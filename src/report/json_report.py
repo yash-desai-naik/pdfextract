@@ -43,6 +43,7 @@ class JSONReport:
                 {
                     "name": room.name,
                     "confidence": round(room.confidence, 2),
+                    "confidence_factors": room.confidence_factors.to_dict() if room.confidence_factors else {},
                     "measurements_used": room.measurements_used,
                     "centroid": [round(c, 3) for c in room.centroid],
                     "bounding_box": [round(b, 3) for b in room.bounding_box],
@@ -71,6 +72,7 @@ class JSONReport:
                         "count": room.strip_count,
                         "individual_lengths_m": [round(s.length_m, 3) for s in room.strips],
                     },
+                    "calculation": room.calculation.to_dict() if room.calculation else {},
                 }
                 for room in rooms
             ],

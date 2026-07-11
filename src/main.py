@@ -89,6 +89,18 @@ Examples:
             print(f"  Total strips:        {result.totals.get('total_strips', 0)}")
             print(f"  Quality score:       {result.quality_report.suitability_score:.0f}%")
             print()
+
+            # Room-by-room breakdown
+            for room in result.rooms:
+                if room.calculation:
+                    print(room.calculation.to_text_block(room.name))
+                else:
+                    # Fallback simple output
+                    print(f"  {room.name}")
+                    print(f"    Area: {room.gross_area_m2:.2f} m²  (conf={room.confidence:.2f})")
+                    print(f"    Strips: {room.strip_count}  Linear: {room.total_linear_m:.1f} m")
+                    print()
+
             print("  Output files:")
 
             for name, path in result.output_files.items():

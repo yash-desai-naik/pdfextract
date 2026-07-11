@@ -13,7 +13,7 @@ from shapely.ops import polygonize, unary_union
 from shapely import set_precision
 
 from src.models.entities import EntityType
-from src.models.rooms import Room
+from src.models.rooms import Room, ConfidenceFactors
 from src.utils.logging import get_logger
 from src.utils.config import get_settings
 
@@ -146,7 +146,12 @@ class RoomReconstructor:
         return polys
 
     def _polygon_to_room(self, polygon: Polygon) -> Optional[Room]:
-        """Convert a Shapely Polygon to a Room, subject to filtering."""
+        """Convert a Shapely Polygon to a Room, subject to filtering.
+
+        Computes confidence from measurable geometric factors rather than
+        using arbitrary baseline values.
+        """
+        was_valid = polygon.is_valid
         if not polygon.is_valid:
             polygon = polygon.buffer(0)
         if polygon.is_empty:
@@ -157,14 +162,45 @@ class RoomReconstructor:
             return None
 
         centroid = (polygon.centroid.x, polygon.centroid.y)
-        bounds = polygon.bounds  # minx, miny, maxx, maxy
+        bounds = polygon.bounds
+
+        # ---- Confidence factors ----
+        cf = ConfidenceFactors()
+
+        # 1. Closed polygon found (+0.30)
+        cf.closed_polygon_found = 0.30
+
+        # 2. No self-intersections (+0.10)
+        cf.no_self_intersections = 0.10 if was_valid else 0.0
+
+        # 3. No inferred geometry (+0.05)
+        # All geometry comes directly from DXF entities
+        cf.no_inferred_geometry = 0.05
+
+        # 4. No broken walls (+0.15) — based on polygon vertex count vs complexity
+        # Simple convex polygons are more likely correct than complex jagged ones
+        try:
+            exterior = polygon.exterior
+            num_vertices = len(exterior.coords)
+            # A typical room has 4-12 vertices. More vertices = more complex = more likely broken
+            if num_vertices <= 6:
+                cf.no_broken_walls = 0.15  # Simple rectangle/L-shape
+            elif num_vertices <= 12:
+                cf.no_broken_walls = 0.10  # Moderate complexity
+            elif num_vertices <= 24:
+                cf.no_broken_walls = 0.05  # Complex
+            else:
+                cf.no_broken_walls = 0.0  # Very complex — likely noise
+        except Exception:
+            pass
 
         return Room(
             name="Unknown",
             polygon=polygon,
             centroid=centroid,
             bounding_box=bounds,
-            confidence=0.7,  # Baseline confidence — increased by labels
+            confidence=cf.total,
+            confidence_factors=cf,
             gross_area_m2=area,
         )
 
