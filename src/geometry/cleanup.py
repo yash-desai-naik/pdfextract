@@ -132,38 +132,67 @@ class GeometryCleaner:
         return result
 
     def _snap_endpoints(self, lines: list[LineString]) -> list[LineString]:
-        """Snap nearby endpoints within tolerance."""
+        """Snap nearby endpoints within tolerance using STRtree."""
         if not lines:
             return lines
 
-        # Collect all endpoints
-        endpoints: list[tuple[float, float, int, bool]] = []  # (x, y, line_idx, is_start)
+        from shapely import STRtree
+        from shapely.geometry import Point
+
+        # Collect all endpoints as Points with metadata
+        endpoint_info: list[tuple[Point, int, bool]] = []  # (point, line_idx, is_start)
         for i, ls in enumerate(lines):
             if ls is None or ls.is_empty:
                 continue
             coords = list(ls.coords)
             if not coords:
                 continue
-            endpoints.append((coords[0][0], coords[0][1], i, True))
-            endpoints.append((coords[-1][0], coords[-1][1], i, False))
+            endpoint_info.append((Point(coords[0]), i, True))
+            endpoint_info.append((Point(coords[-1]), i, False))
 
-        # Use R-tree approach for efficiency
+        if not endpoint_info:
+            return lines
+
+        # Build spatial index
+        points = [p for p, _, _ in endpoint_info]
+        tree = STRtree(points)
+
         snapped_count = 0
-        for i, (x1, y1, line_idx, is_start) in enumerate(endpoints):
-            for j, (x2, y2, other_idx, _) in enumerate(endpoints):
+        n = len(endpoint_info)
+        modified_lines: dict[int, list] = {}  # line_idx -> updated coords
+
+        for i, (pt, line_idx, is_start) in enumerate(endpoint_info):
+            # Find nearby points
+            buf = pt.buffer(self.tolerance)
+            try:
+                nearby_indices = tree.query(buf, predicate="intersects")
+            except Exception:
+                continue
+
+            for idx in nearby_indices:
+                j = int(idx)
                 if i == j:
                     continue
-                dx, dy = x1 - x2, y1 - y2
-                dist = (dx * dx + dy * dy) ** 0.5
+                other_pt, other_line_idx, _ = endpoint_info[j]
+                dist = pt.distance(other_pt)
                 if 0 < dist <= self.tolerance:
-                    coords = list(lines[line_idx].coords)
-                    if is_start:
-                        coords[0] = (x2, y2)
+                    # Snap line_idx's endpoint to other_pt's location
+                    if line_idx not in modified_lines:
+                        coords = list(lines[line_idx].coords)
+                        modified_lines[line_idx] = coords
                     else:
-                        coords[-1] = (x2, y2)
-                    lines[line_idx] = LineString(coords)
+                        coords = modified_lines[line_idx]
+
+                    if is_start:
+                        coords[0] = (other_pt.x, other_pt.y)
+                    else:
+                        coords[-1] = (other_pt.x, other_pt.y)
                     snapped_count += 1
-                    break
+                    break  # One snap per endpoint
+
+        # Apply modifications
+        for line_idx, coords in modified_lines.items():
+            lines[line_idx] = LineString(coords)
 
         self._stats["snapped_endpoints"] = snapped_count
         return lines
@@ -191,9 +220,16 @@ class GeometryCleaner:
         return unique
 
     def _merge_touching(self, lines: list[LineString]) -> list[LineString]:
-        """Merge touching collinear segments using Shapely's linemerge."""
+        """Merge touching collinear segments using Shapely's linemerge.
+
+        For large datasets (>5000 segments), skip merging to avoid performance issues.
+        """
         if not lines:
             return []
+        # Skip merge for large datasets — precision snapping does enough
+        if len(lines) > 5000:
+            logger.info("Skipping linemerge for %d segments (too large)", len(lines))
+            return lines
         try:
             merged = linemerge(lines)
             if isinstance(merged, LineString):

@@ -157,31 +157,52 @@ class CADQualityAnalyzer:
         return report
 
     def _count_disconnected(self, groups: dict[str, list]) -> int:
-        """Count endpoints that don't connect to any other endpoint within tolerance."""
+        """Count endpoints that don't connect to any other endpoint within tolerance.
+
+        Uses spatial indexing (STRtree) for O(n log n) performance instead of O(n²).
+        """
+        from shapely import STRtree
+        from shapely.geometry import Point
+
         tolerance = 0.005  # 5 mm
-        endpoints: list[tuple[float, float]] = []
+        endpoints: list[Point] = []
 
         for ent in groups.get("LINE", []):
-            endpoints.append((ent.dxf.start.x, ent.dxf.start.y))
-            endpoints.append((ent.dxf.end.x, ent.dxf.end.y))
+            endpoints.append(Point(ent.dxf.start.x, ent.dxf.start.y))
+            endpoints.append(Point(ent.dxf.end.x, ent.dxf.end.y))
 
         for lwp in groups.get("LWPOLYLINE", []):
             pts = lwp.get_points("xy")
             for pt in pts:
-                endpoints.append(pt)
+                endpoints.append(Point(pt[0], pt[1]))
+
+        if not endpoints:
+            return 0
+
+        # Build spatial index on endpoints
+        tree = STRtree(endpoints)
 
         disconnected = 0
+        n = len(endpoints)
         for i, ep in enumerate(endpoints):
-            connected = False
-            for j, other in enumerate(endpoints):
-                if i == j:
-                    continue
-                dist = ((ep[0] - other[0]) ** 2 + (ep[1] - other[1]) ** 2) ** 0.5
-                if dist <= tolerance:
-                    connected = True
-                    break
-            if not connected:
+            # Query nearby points within tolerance
+            buf = ep.buffer(tolerance)
+            try:
+                # Returns indices into the original endpoints array
+                nearby_indices = tree.query(buf, predicate="intersects")
+            except Exception:
+                nearby_indices = []
+            # Count unique neighbours (exclude self)
+            count = 0
+            for idx in nearby_indices:
+                j = int(idx)
+                if i != j:
+                    nb = endpoints[j]
+                    if ep.distance(nb) <= tolerance:
+                        count += 1
+            if count == 0:
                 disconnected += 1
+
         return disconnected
 
     def _count_duplicates(self, groups: dict[str, list]) -> int:

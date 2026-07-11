@@ -52,15 +52,17 @@ class SpatialIndex:
             self.build()
         if self._tree is None:
             return []
-        raw_results = self._tree.query(geometry, predicate="intersects")
-        # Map back to data items
+        # query() returns indices into the input geometry array
+        raw_indices = self._tree.query(geometry, predicate="intersects")
+        # Map indices back to data items
         results = []
-        geoms = [g for g, _ in self._geometries]
-        for r in raw_results:
-            for g, d in self._geometries:
-                if g.equals(r):
-                    results.append(d)
-                    break
+        seen = set()
+        for idx in raw_indices:
+            i = int(idx)
+            if i not in seen:
+                seen.add(i)
+                _, data = self._geometries[i]
+                results.append(data)
         return results
 
     def nearest(self, point: Point, k: int = 1) -> list[tuple[Any, float]]:

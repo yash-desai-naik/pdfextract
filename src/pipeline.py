@@ -116,22 +116,47 @@ class CADPipeline:
             # --- Stage 4: Parse DXF ---
             logger.info("Stage 4: Parsing entities...")
             parser = CADParser(doc)
-            entities = parser.parse()
+            entities_raw = parser.parse()
             blocks = parser.parse_blocks()
-            total_ents = sum(len(v) for v in entities.values())
+            total_ents = sum(len(v) for v in entities_raw.values())
             logger.info("Parsed %d entities from modelspace", total_ents)
 
-            # Convert all coordinates to metres
             conv = result.units.to_metres
-            if conv != 1.0:
-                entities = self._convert_units(entities, conv)
 
-            # --- Stage 5: Geometry Cleanup ---
+            # --- Stage 5: Geometry Cleanup (in drawing units) ---
             logger.info("Stage 5: Geometry cleanup...")
-            cleaner = GeometryCleaner()
-            cleaned = cleaner.clean(entities)
+            # Scale tolerances to drawing units
+            geo_settings = self.settings.geometry.model_copy(deep=True) if hasattr(self.settings.geometry, 'model_copy') else self.settings.geometry
+            if conv != 1.0:
+                # Temporarily scale settings so tolerances match drawing units
+                import copy
+                safe_settings = copy.copy(self.settings)
+                safe_settings.geometry = copy.copy(self.settings.geometry)
+                safe_settings.geometry.snap_tolerance_m = self.settings.geometry.snap_tolerance_m / conv
+                safe_settings.geometry.merge_tolerance_m = self.settings.geometry.merge_tolerance_m / conv
+                safe_settings.geometry.min_segment_length_m = self.settings.geometry.min_segment_length_m / conv
+                safe_settings.geometry.simplification_tolerance_m = self.settings.geometry.simplification_tolerance_m / conv
+                # Temporarily set these settings
+                from src.utils.config import set_settings
+                old_settings = get_settings()
+                set_settings(safe_settings)
+                try:
+                    cleaner = GeometryCleaner()
+                    cleaned = cleaner.clean(entities_raw)
+                finally:
+                    set_settings(old_settings)
+            else:
+                cleaner = GeometryCleaner()
+                cleaned = cleaner.clean(entities_raw)
             result.warnings.extend(cleaner.warnings)
             logger.info("Cleanup stats: %s", cleaner.stats)
+
+            # Convert all coordinates to metres (after cleanup)
+            if conv != 1.0:
+                cleaned = self._convert_units(cleaned, conv)
+                entities = self._convert_units(entities_raw, conv)
+            else:
+                entities = entities_raw
 
             # --- Stage 6: Room Reconstruction ---
             logger.info("Stage 6: Room reconstruction...")

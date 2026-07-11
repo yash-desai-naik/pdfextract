@@ -72,12 +72,36 @@ class UnitDetector:
         return list(self._warnings)
 
     def detect(self) -> LengthUnit:
-        """Run detection heuristics and return the best guess."""
+        """Run detection heuristics and return the best guess.
+
+        Uses:
+            1. $INSUNITS header variable
+            2. $LIMMAX / $EXTMAX to check for unit mismatch
+            3. $MEASUREMENT (0=imperial, 1=metric)
+            4. Heuristic: bounding-box size suggests units
+        """
+        # First, read the drawing limits to check for unit mismatch
+        limmax = self._read_limits()
+
         # Level 1: INSUNITS header
         insunits = self.doc.header.get("$INSUNITS", 0)
         if insunits and insunits != 0:
             unit = LengthUnit.from_ezdxf_units(insunits)
             if unit != LengthUnit.UNKNOWN:
+                # Sanity check: if LIMITS suggest millimetres but INSUNITS says metres, override
+                if limmax is not None:
+                    limit_unit = self._sanity_check_limits(limmax, unit)
+                    if limit_unit is not None and limit_unit != unit:
+                        logger.warning(
+                            "LIMITS (%.0f) suggest %s but INSUNITS says %s — overriding to %s",
+                            limmax, limit_unit.label, unit.label, limit_unit.label,
+                        )
+                        self._warnings.append(
+                            f"Unit override: INSUNITS={unit.label}, LIMITS suggest {limit_unit.label}"
+                        )
+                        self._unit = limit_unit
+                        return limit_unit
+
                 logger.info("Detected units from $INSUNITS: %s (code=%d)", unit.label, insunits)
                 self._unit = unit
                 return unit
@@ -94,11 +118,57 @@ class UnitDetector:
             heuristic = self._heuristic_units(extent)
             if heuristic != unit:
                 logger.warning(
-                    "Unit heuristic (%s) suggests %s but header says %s — using header value",
+                    "Unit heuristic (%s) suggests %s but header says %s — using heuristic",
                     extent, heuristic.label, unit.label,
                 )
+                self._unit = heuristic
+                return heuristic
 
         return unit
+
+    def _read_limits(self) -> Optional[float]:
+        """Read the actual drawing extent for unit sanity checks.
+
+        Uses the entity bounding-box extent (not LIMMAX which is often
+        the ezdxf default of 420x297). Only checks geometry extent.
+        """
+        try:
+            # Use the computed geometry extent if available
+            extent = self._compute_extent()
+            if extent is not None and extent > 0:
+                return extent
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _sanity_check_limits(limit_max: float, current_unit: LengthUnit) -> Optional[LengthUnit]:
+        """Check if the drawing limits contradict the declared units.
+
+        Paper sizes in millimetres: A4=297, A3=420, A2=594, A1=841, A0=1189
+        If limits match paper sizes in mm but units say metres, override.
+        """
+        paper_sizes_mm = [297, 420, 594, 841, 1189, 594, 841, 1189]
+        paper_sizes_cm = [29.7, 42, 59.4, 84.1, 118.9]
+        paper_sizes_m = [0.297, 0.42, 0.594, 0.841, 1.189]
+        paper_sizes_ft = [1.0, 1.4, 2.0, 2.8, 3.9]
+        paper_sizes_in = [11.7, 16.5, 23.4, 33.1, 46.8]
+
+        # Check if LIMITS suggests millimetres
+        for size in paper_sizes_mm:
+            if abs(limit_max - size) / max(size, 1) < 0.05:
+                if current_unit == LengthUnit.METRES:
+                    return LengthUnit.MILLIMETRES
+                break
+
+        # Check if LIMITS suggests centimetres
+        for size in paper_sizes_cm:
+            if abs(limit_max - size) / max(size, 1) < 0.05:
+                if current_unit == LengthUnit.METRES:
+                    return LengthUnit.CENTIMETRES
+                break
+
+        return None
 
     def _compute_extent(self) -> Optional[float]:
         """Compute the maximum extent of all geometry in model space."""
