@@ -306,12 +306,20 @@ with tab_takeoff:
             key="trace_canvas",
         )
 
-        # ---- Extract shapes from canvas ----
+        # ---- Extract shapes from canvas (with change detection to avoid key conflicts) ----
         if "rooms" not in st.session_state:
             st.session_state.rooms = []
+            st.session_state.canvas_hash = None
 
-        if canvas_result and canvas_result.json_data and canvas_result.json_data.get("objects"):
-            objects = canvas_result.json_data["objects"]
+        # Compute hash of current canvas to detect changes
+        import hashlib
+        current_hash = None
+        if canvas_result and canvas_result.json_data:
+            raw = json.dumps(canvas_result.json_data.get("objects", []), sort_keys=True)
+            current_hash = hashlib.md5(raw.encode()).hexdigest()
+
+        if current_hash and current_hash != st.session_state.canvas_hash:
+            objects = canvas_result.json_data.get("objects", [])
             new_rooms = []
 
             for obj in objects:
@@ -321,13 +329,10 @@ with tab_takeoff:
                 if obj_type == "polygon" and "points" in obj:
                     raw_pts = obj["points"]
                 elif obj_type == "path" and "path" in obj:
-                    # freeform path -> extract points from path commands
                     pts = []
                     for cmd in obj["path"]:
                         if len(cmd) >= 3:
                             pts.append((cmd[1], cmd[2]))
-                        elif len(cmd) >= 1 and cmd[0] in ("M", "L"):
-                            continue
                     if len(pts) >= 3:
                         raw_pts = [{"x": p[0], "y": p[1]} for p in pts]
                 elif obj_type == "rect" and "left" in obj:
@@ -335,10 +340,8 @@ with tab_takeoff:
                     w = obj["width"] * obj.get("scaleX", 1)
                     h = obj["height"] * obj.get("scaleY", 1)
                     raw_pts = [
-                        {"x": x, "y": y},
-                        {"x": x + w, "y": y},
-                        {"x": x + w, "y": y + h},
-                        {"x": x, "y": y + h},
+                        {"x": x, "y": y}, {"x": x + w, "y": y},
+                        {"x": x + w, "y": y + h}, {"x": x, "y": y + h},
                     ]
 
                 if raw_pts and len(raw_pts) >= 3:
@@ -376,8 +379,9 @@ with tab_takeoff:
                     except Exception:
                         pass
 
-            if new_rooms:
+            if new_rooms or (current_hash != st.session_state.canvas_hash):
                 st.session_state.rooms = new_rooms
+                st.session_state.canvas_hash = current_hash
 
         st.caption(f"**{len(st.session_state.rooms)}** shape(s) on canvas")
 
@@ -388,17 +392,18 @@ with tab_takeoff:
 
             for i, room in enumerate(st.session_state.rooms):
                 cols = st.columns([3, 1, 0.5])
+                uid = f"{st.session_state.canvas_hash or 'nocanvas'}_{i}"
                 with cols[0]:
                     room["name"] = cols[0].text_input(
                         f"Shape {i+1} ({room['area_m2']} m²)",
-                        value=room["name"], key=f"name_{i}",
+                        value=room["name"], key=f"name_{uid}",
                     )
                 with cols[1]:
                     room["is_exclusion"] = cols[1].checkbox(
-                        "Exclusion", value=room["is_exclusion"], key=f"excl_{i}",
+                        "Exclusion", value=room["is_exclusion"], key=f"excl_{uid}",
                     )
                 with cols[2]:
-                    if cols[2].button("✕", key=f"del_{i}"):
+                    if cols[2].button("✕", key=f"del_{uid}"):
                         st.session_state.rooms.pop(i)
                         st.rerun()
 
