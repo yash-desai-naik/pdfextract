@@ -2,10 +2,11 @@
 
 import io
 import math
+import os
 
 import ezdxf
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 router = APIRouter()
 
@@ -136,6 +137,19 @@ async def get_dxf_bounds(path: str = Query(...)):
         "unit": unit.label,
         "unit_to_m": unit.to_metres,
     }
+
+
+@router.get("/dxf/download")
+async def download_dxf(path: str = Query(...)):
+    """Serve the DXF file for download."""
+    if not os.path.exists(path):
+        raise HTTPException(404, "DXF file not found")
+    return FileResponse(
+        path,
+        media_type="application/dxf",
+        filename=os.path.basename(path),
+        headers={"Content-Disposition": f'attachment; filename="{os.path.basename(path)}""},
+    )
 
 
 def _escape(s: str) -> str:

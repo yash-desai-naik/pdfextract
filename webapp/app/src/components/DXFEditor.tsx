@@ -44,6 +44,28 @@ export default function DXFEditor({
   const [currentExcl, setCurrentExcl] = useState<number[][]>([]);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0 });
+  const SVG_RENDER_W = 2000;
+  const SVG_RENDER_H = 1500;
+
+  // Compute pixel → world transform from SVG viewBox + render size
+  // SVG has viewBox="xmin ymin vw vh" rendered at SVG_RENDER_W × SVG_RENDER_H
+  // with default preserveAspectRatio="xMidYMid meet"
+  const pixelToMetres = (px: number, py: number): [number, number] => {
+    const [xmin, ymin, xmax, ymax] = bounds;
+    const vw = xmax - xmin;
+    const vh = ymax - ymin;
+    const fitScale = Math.min(SVG_RENDER_W / vw, SVG_RENDER_H / vh);
+    const offX = (SVG_RENDER_W - vw * fitScale) / 2;
+    const offY = (SVG_RENDER_H - vh * fitScale) / 2;
+    // canvas pixel → SVG render pixel (stretched to fill canvas)
+    const c = fabricRef.current!;
+    const svgPx = (px / c.width!) * SVG_RENDER_W;
+    const svgPy = (py / c.height!) * SVG_RENDER_H;
+    // SVG render pixel → real DXF unit → metres
+    const realX = xmin + (svgPx - offX) / fitScale;
+    const realY = ymin + (svgPy - offY) / fitScale;
+    return [realX / 1000, realY / 1000];
+  };
 
   // ===== Refs to avoid stale closures in Fabric event handlers =====
   const modeRef = useRef(mode);
@@ -95,7 +117,7 @@ export default function DXFEditor({
         if (m === "select") return;
 
         const pointer = c.getPointer(opt.e);
-        const pt: [number, number] = [pointer.x, pointer.y];
+        const pt = pixelToMetres(pointer.x, pointer.y);
 
         if (m === "room") {
           setCurrentRoom((prev) => {
@@ -355,18 +377,27 @@ export default function DXFEditor({
 
   return (
     <div className="h-full flex flex-col">
-      <Toolbar
-        mode={mode}
-        onModeChange={(m) => setMode(m)}
-        onUndo={handleUndo}
-        onFitView={handleFitView}
-        onDelete={handleDelete}
-        onFinishRoom={finishRoom}
-        onCalculate={onCalculate}
-        calculating={calculating}
-        roomCount={rooms.length}
-        totalArea={totalArea}
-      />
+      <div className="flex items-center shrink-0">
+        <Toolbar
+          mode={mode}
+          onModeChange={(m) => setMode(m)}
+          onUndo={handleUndo}
+          onFitView={handleFitView}
+          onDelete={handleDelete}
+          onFinishRoom={finishRoom}
+          onCalculate={onCalculate}
+          calculating={calculating}
+          roomCount={rooms.length}
+          totalArea={totalArea}
+        />
+        <a
+          href={`/api/dxf/download?path=${encodeURIComponent(dxfPath)}`}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-all shrink-0 mr-2"
+          title="Download DXF file"
+        >
+          ⬇ DXF
+        </a>
+      </div>
       <div className="flex-1 flex overflow-hidden">
         <div
           ref={containerRef}
