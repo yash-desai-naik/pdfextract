@@ -45,6 +45,20 @@ export default function DXFEditor({
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0 });
 
+  // ===== Refs to avoid stale closures in Fabric event handlers =====
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const currentRoomRef = useRef(currentRoom);
+  currentRoomRef.current = currentRoom;
+  const currentExclRef = useRef(currentExcl);
+  currentExclRef.current = currentExcl;
+  const isPanningRef = useRef(isPanning);
+  isPanningRef.current = isPanning;
+
+  // Store finishRoom/finishExclusion callbacks in refs to avoid stale closures
+  const finishRoomRef = useRef<() => void>(() => {});
+  const finishExclRef = useRef<() => void>(() => {});
+
   // ===== Init Fabric canvas =====
   useEffect(() => {
     if (!canvasRef.current || fabricRef.current) return;
@@ -70,29 +84,39 @@ export default function DXFEditor({
     });
 
     c.on("mouse:down", (opt) => {
-      if (opt.e.button === 2) return; // right click handled below
-      if (mode === "pan") {
-        setIsPanning(true);
-        panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
-        return;
-      }
-      if (mode === "select") return;
+      const m = modeRef.current;
+      if (opt.e.button === 0) {
+        // Left click
+        if (m === "pan") {
+          isPanningRef.current = true;
+          panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
+          return;
+        }
+        if (m === "select") return;
 
-      const pointer = c.getPointer(opt.e);
-      const pt: [number, number] = [pointer.x, pointer.y];
+        const pointer = c.getPointer(opt.e);
+        const pt: [number, number] = [pointer.x, pointer.y];
 
-      if (mode === "room") {
-        setCurrentRoom((prev) => {
-          const room = prev || { vertices: [], exclusions: [] };
-          return { ...room, vertices: [...room.vertices, pt] };
-        });
-      } else if (mode === "exclusion") {
-        setCurrentExcl((prev) => [...prev, pt]);
+        if (m === "room") {
+          setCurrentRoom((prev) => {
+            const room = prev || { vertices: [], exclusions: [] };
+            return { ...room, vertices: [...room.vertices, pt] };
+          });
+        } else if (m === "exclusion") {
+          setCurrentExcl((prev) => [...prev, pt]);
+        }
+      } else if (opt.e.button === 2) {
+        // Right click: close shape
+        if (m === "room") {
+          finishRoomRef.current();
+        } else if (m === "exclusion") {
+          finishExclRef.current();
+        }
       }
     });
 
     c.on("mouse:move", (opt) => {
-      if (isPanning && mode === "pan") {
+      if (isPanningRef.current && modeRef.current === "pan") {
         const vpt = c.viewportTransform!;
         vpt[4] += opt.e.clientX - panStart.current.x;
         vpt[5] += opt.e.clientY - panStart.current.y;
@@ -101,17 +125,10 @@ export default function DXFEditor({
       }
     });
 
-    c.on("mouse:up", () => setIsPanning(false));
-
-    // Right click closes shape
-    c.on("mouse:down", (opt) => {
-      if (opt.e.button !== 2) return;
-      if (mode === "room" && currentRoom && currentRoom.vertices.length >= 3) {
-        finishRoom();
-      } else if (mode === "exclusion" && currentExcl.length >= 3) {
-        finishExclusion();
-      }
+    c.on("mouse:up", () => {
+      isPanningRef.current = false;
     });
+
     c.onContextMenu = () => false;
 
     const resize = () => {
@@ -126,6 +143,37 @@ export default function DXFEditor({
       fabricRef.current = null;
     };
   }, []);
+
+  // Keep finishRoom/finishExclusion refs updated
+  const finishRoom = useCallback(() => {
+    if (!currentRoom || currentRoom.vertices.length < 3) return;
+    const name = `Room ${rooms.length + 1}`;
+    const newRoom: RoomData = {
+      id: nextId(),
+      name,
+      vertices: currentRoom.vertices,
+      exclusions: currentRoom.exclusions,
+    };
+    onRoomsChange([...rooms, newRoom]);
+    setCurrentRoom(null);
+    setCurrentExcl([]);
+  }, [currentRoom, rooms, onRoomsChange]);
+
+  const finishExclusion = useCallback(() => {
+    if (currentExcl.length < 3 || !currentRoom) return;
+    setCurrentRoom({
+      ...currentRoom,
+      exclusions: [...currentRoom.exclusions, [...currentExcl]],
+    });
+    setCurrentExcl([]);
+  }, [currentExcl, currentRoom]);
+
+  useEffect(() => {
+    finishRoomRef.current = finishRoom;
+  }, [finishRoom]);
+  useEffect(() => {
+    finishExclRef.current = finishExclusion;
+  }, [finishExclusion]);
 
   // ===== Load DXF as server-rendered SVG background =====
   useEffect(() => {
@@ -276,30 +324,6 @@ export default function DXFEditor({
     }
     c.renderAll();
   }, [currentRoom, currentExcl]);
-
-  // ===== Actions =====
-  const finishRoom = useCallback(() => {
-    if (!currentRoom || currentRoom.vertices.length < 3) return;
-    const name = `Room ${rooms.length + 1}`;
-    const newRoom: RoomData = {
-      id: nextId(),
-      name,
-      vertices: currentRoom.vertices,
-      exclusions: currentRoom.exclusions,
-    };
-    onRoomsChange([...rooms, newRoom]);
-    setCurrentRoom(null);
-    setCurrentExcl([]);
-  }, [currentRoom, rooms, onRoomsChange]);
-
-  const finishExclusion = useCallback(() => {
-    if (currentExcl.length < 3 || !currentRoom) return;
-    setCurrentRoom({
-      ...currentRoom,
-      exclusions: [...currentRoom.exclusions, [...currentExcl]],
-    });
-    setCurrentExcl([]);
-  }, [currentExcl, currentRoom]);
 
   const handleUndo = useCallback(() => {
     if (mode === "exclusion" && currentExcl.length > 0) {
