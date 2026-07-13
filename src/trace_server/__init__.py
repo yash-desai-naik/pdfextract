@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import ezdxf
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -202,12 +200,12 @@ async def upload_dxf(file: UploadFile = File(...)):
     with open(save_path, "wb") as f:
         f.write(content)
 
-    return JSONResponse({
-        "status": "ok",
-        "path": str(save_path),
-        "filename": file.filename or "unknown",
-        "size": len(content),
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "path": str(save_path),
+            "filename": file.filename or "unknown",
+            "size": len(content),
         }
     )
 
