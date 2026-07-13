@@ -24,24 +24,13 @@ export default function RoomPanel({
 
   const handleRename = (id: string) => {
     onRoomsChange(
-      rooms.map((r) => (r.id === id ? { ...r, name: editName || r.name } : r))
+      rooms.map((r) => (r.id === id ? { ...r, name: editName || r.name } : r)),
     );
     setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
     onRoomsChange(rooms.filter((r) => r.id !== id));
-  };
-
-  const area = (verts: number[][]) => {
-    if (verts.length < 3) return 0;
-    let sum = 0;
-    for (let i = 0; i < verts.length; i++) {
-      const j = (i + 1) % verts.length;
-      sum += verts[i][0] * verts[j][1];
-      sum -= verts[j][0] * verts[i][1];
-    }
-    return Math.abs(sum) / 2;
   };
 
   return (
@@ -52,14 +41,13 @@ export default function RoomPanel({
           Rooms
         </h3>
         <p className="text-xs text-slate-600 mt-0.5">
-          {rooms.length} traced · {rooms.reduce((s, r) => s + area(r.vertices), 0).toFixed(1)} m²
+          {rooms.length} rooms traced
         </p>
       </div>
 
       {/* Room list */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
         {rooms.map((room) => {
-          const roomArea = area(room.vertices);
           return (
             <div
               key={room.id}
@@ -72,7 +60,9 @@ export default function RoomPanel({
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     onBlur={() => handleRename(room.id)}
-                    onKeyDown={(e) => e.key === "Enter" && handleRename(room.id)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && handleRename(room.id)
+                    }
                     className="bg-slate-700 text-sm text-slate-100 px-2 py-0.5 rounded border border-slate-600 outline-none w-full"
                   />
                 ) : (
@@ -94,10 +84,11 @@ export default function RoomPanel({
                 </button>
               </div>
               <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
-                <span>{roomArea.toFixed(2)} m²</span>
                 <span>{room.vertices.length} pts</span>
                 {room.exclusions.length > 0 && (
-                  <span className="text-danger/70">{room.exclusions.length} excl</span>
+                  <span className="text-danger/70">
+                    {room.exclusions.length} excl
+                  </span>
                 )}
               </div>
             </div>
@@ -107,10 +98,15 @@ export default function RoomPanel({
         {/* Empty state */}
         {rooms.length === 0 && !currentRoom && (
           <div className="text-center py-8 text-slate-600">
-            <Hexagon className="w-8 h-8 mx-auto mb-2 opacity-30" strokeWidth={1.5} />
+            <Hexagon
+              className="w-8 h-8 mx-auto mb-2 opacity-30"
+              strokeWidth={1.5}
+            />
             <p className="text-xs">Select Room tool</p>
             <p className="text-xs">and click on the plan</p>
-            <p className="text-xs mt-2 text-slate-700">Right-click to close shape</p>
+            <p className="text-xs mt-2 text-slate-700">
+              Right-click to close shape
+            </p>
           </div>
         )}
 

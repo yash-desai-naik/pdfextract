@@ -117,15 +117,16 @@ export default function DXFEditor({
         if (m === "select") return;
 
         const pointer = c.getPointer(opt.e);
-        const pt = pixelToMetres(pointer.x, pointer.y);
+        // Store pixel coords for rendering; convert to metres on finish
+        const ptPx: [number, number] = [pointer.x, pointer.y];
 
         if (m === "room") {
           setCurrentRoom((prev) => {
             const room = prev || { vertices: [], exclusions: [] };
-            return { ...room, vertices: [...room.vertices, pt] };
+            return { ...room, vertices: [...room.vertices, ptPx] };
           });
         } else if (m === "exclusion") {
-          setCurrentExcl((prev) => [...prev, pt]);
+          setCurrentExcl((prev) => [...prev, ptPx]);
         }
       } else if (opt.e.button === 2) {
         // Right click: close shape
@@ -169,12 +170,14 @@ export default function DXFEditor({
   // Keep finishRoom/finishExclusion refs updated
   const finishRoom = useCallback(() => {
     if (!currentRoom || currentRoom.vertices.length < 3) return;
+    // Convert pixel coords to metres before saving
+    const toMetres = (v: number[][]) => v.map(([x, y]) => pixelToMetres(x, y));
     const name = `Room ${rooms.length + 1}`;
     const newRoom: RoomData = {
       id: nextId(),
       name,
-      vertices: currentRoom.vertices,
-      exclusions: currentRoom.exclusions,
+      vertices: toMetres(currentRoom.vertices),
+      exclusions: currentRoom.exclusions.map((e) => toMetres(e)),
     };
     onRoomsChange([...rooms, newRoom]);
     setCurrentRoom(null);
