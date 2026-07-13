@@ -77,6 +77,22 @@ export default function DXFEditor({
   const isPanningRef = useRef(isPanning);
   isPanningRef.current = isPanning;
 
+  // Toggle Fabric free-drawing mode when entering/exiting freeform
+  useEffect(() => {
+    const c = fabricRef.current;
+    if (!c) return;
+    if (mode === "freeform") {
+      c.isDrawingMode = true;
+      if (c.freeDrawingBrush) {
+        c.freeDrawingBrush.width = 3;
+        c.freeDrawingBrush.color = "#10b981";
+      }
+    } else {
+      c.isDrawingMode = false;
+    }
+    c.selection = false;
+  }, [mode]);
+
   // Store finishRoom/finishExclusion callbacks in refs to avoid stale closures
   const finishRoomRef = useRef<() => void>(() => {});
   const finishExclRef = useRef<() => void>(() => {});
@@ -108,16 +124,15 @@ export default function DXFEditor({
     c.on("mouse:down", (opt) => {
       const m = modeRef.current;
       if (opt.e.button === 0) {
-        // Left click
         if (m === "pan") {
           isPanningRef.current = true;
           panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
           return;
         }
         if (m === "select") return;
+        if (m === "freeform") return; // freeform uses path:pathcreated instead
 
         const pointer = c.getPointer(opt.e);
-        // Store pixel coords for rendering; convert to metres on finish
         const ptPx: [number, number] = [pointer.x, pointer.y];
 
         if (m === "room") {
@@ -129,12 +144,56 @@ export default function DXFEditor({
           setCurrentExcl((prev) => [...prev, ptPx]);
         }
       } else if (opt.e.button === 2) {
-        // Right click: close shape
-        if (m === "room") {
+        if (m === "room" || m === "freeform") {
           finishRoomRef.current();
         } else if (m === "exclusion") {
           finishExclRef.current();
         }
+      }
+    });
+
+    // Freeform drawing: capture path points on completion
+    c.on("path:created", (opt) => {
+      const m = modeRef.current;
+      if (m !== "freeform" && m !== "room") return;
+      const path = opt.path;
+      if (!path) return;
+      // Sample points from the drawn path (every ~5px to keep it manageable)
+      const raw = path.path;
+      const points: [number, number][] = [];
+      const minDist = 5;
+      let last: [number, number] | null = null;
+      for (const cmd of raw) {
+        const action = cmd[0] as string;
+        // Fabric path commands: M x y, L x y, C x1 y1 x2 y2 x y, Q x1 y1 x y
+        let x: number | undefined, y: number | undefined;
+        if (action === "M" || action === "L") {
+          x = cmd[1] as number;
+          y = cmd[2] as number;
+        } else if (action === "Q") {
+          x = cmd[3] as number;
+          y = cmd[4] as number;
+        } else if (action === "C") {
+          x = cmd[5] as number;
+          y = cmd[6] as number;
+        }
+        if (x !== undefined && y !== undefined) {
+          const pt: [number, number] = [x, y];
+          if (!last || Math.hypot(x - last[0], y - last[1]) > minDist) {
+            points.push(pt);
+            last = pt;
+          }
+        }
+      }
+      if (points.length < 3) return;
+      // Remove the drawn path (we'll render as polygon)
+      c.remove(path);
+      // Add sampled points to current room
+      if (m === "freeform" || m === "room") {
+        setCurrentRoom((prev) => {
+          const room = prev || { vertices: [], exclusions: [] };
+          return { ...room, vertices: [...room.vertices, ...points] };
+        });
       }
     });
 

@@ -54,4 +54,4 @@ export interface TakeoffResult {
 }
 
 export type AppMode = "upload" | "editor" | "results";
-export type EditorMode = "select" | "room" | "exclusion" | "pan";
+export type EditorMode = "select" | "room" | "exclusion" | "pan" | "freeform";

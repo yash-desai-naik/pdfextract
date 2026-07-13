@@ -3,6 +3,7 @@ import {
   Hexagon,
   Ban,
   Hand,
+  Pen,
   Undo2,
   Trash2,
   Maximize2,
@@ -24,13 +25,6 @@ interface Props {
   totalArea: number;
 }
 
-const tools: { mode: EditorMode; icon: typeof Hexagon; label: string; shortcut: string }[] = [
-  { mode: "select", icon: MousePointer2, label: "Select", shortcut: "S" },
-  { mode: "room", icon: Hexagon, label: "Room", shortcut: "R" },
-  { mode: "exclusion", icon: Ban, label: "Exclusion", shortcut: "E" },
-  { mode: "pan", icon: Hand, label: "Pan", shortcut: "P" },
-];
-
 export default function Toolbar({
   mode,
   onModeChange,
@@ -43,6 +37,18 @@ export default function Toolbar({
   roomCount,
   totalArea,
 }: Props) {
+  const tools: {
+    mode: EditorMode;
+    icon: typeof Hexagon;
+    label: string;
+    shortcut: string;
+  }[] = [
+    { mode: "select", icon: MousePointer2, label: "Select", shortcut: "S" },
+    { mode: "room", icon: Hexagon, label: "Room", shortcut: "R" },
+    { mode: "freeform", icon: Pen, label: "Freeform", shortcut: "F" },
+    { mode: "exclusion", icon: Ban, label: "Exclusion", shortcut: "E" },
+    { mode: "pan", icon: Hand, label: "Pan", shortcut: "P" },
+  ];
   return (
     <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-800/50 border-b border-slate-700/50 shrink-0">
       {/* Drawing tools */}
