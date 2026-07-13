@@ -148,7 +148,9 @@ async def download_dxf(path: str = Query(...)):
         path,
         media_type="application/dxf",
         filename=os.path.basename(path),
-        headers={"Content-Disposition": f'attachment; filename="{os.path.basename(path)}""},
+        headers={
+            "Content-Disposition": f'attachment; filename="{os.path.basename(path)}"'
+        },
     )
 
 
