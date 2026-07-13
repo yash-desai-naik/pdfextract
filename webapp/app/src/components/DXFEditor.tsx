@@ -1,0 +1,450 @@
+import { useEffect, useRef, useState, useCallback } from "react";
+import fabric from "fabric";
+const { Canvas, Polyline, Polygon, Circle, Text, Point, Rect } = fabric;
+import type { DXFData, RoomData, EditorMode } from "../types";
+import RoomPanel from "./RoomPanel";
+import Toolbar from "./Toolbar";
+import {
+  MousePointer2,
+  Hexagon,
+  Ban,
+  Hand,
+  Undo2,
+  Check,
+  Ruler,
+} from "lucide-react";
+
+interface Props {
+  dxfData: DXFData;
+  rooms: RoomData[];
+  onRoomsChange: (rooms: RoomData[]) => void;
+  onCalculate: () => void;
+  calculating: boolean;
+}
+
+// === Drawing helpers ===
+const ROOM_COLOR = "#10b981";
+const EXCL_COLOR = "#ef4444";
+const ROOM_FILL = "rgba(16, 185, 129, 0.08)";
+const EXCL_FILL = "rgba(239, 68, 68, 0.15)";
+
+let roomIdCounter = 0;
+function nextId() {
+  return `room_${++roomIdCounter}`;
+}
+
+export default function DXFEditor({
+  dxfData,
+  rooms,
+  onRoomsChange,
+  onCalculate,
+  calculating,
+}: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const fabricRef = useRef<fabric.Canvas | null>(null);
+  const [mode, setMode] = useState<EditorMode>("pan");
+  const [currentRoom, setCurrentRoom] = useState<{
+    vertices: number[][];
+    exclusions: number[][][];
+  } | null>(null);
+  const [currentExcl, setCurrentExcl] = useState<number[][]>([]);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panPos, setPanPos] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStart = useRef({ x: 0, y: 0 });
+
+  // ===== Init Fabric canvas =====
+  useEffect(() => {
+    if (!canvasRef.current || fabricRef.current) return;
+
+    const container = containerRef.current!;
+    const c = new fabric.Canvas(canvasRef.current, {
+      width: container.clientWidth,
+      height: container.clientHeight,
+      selection: false,
+      preserveObjectStacking: true,
+      backgroundColor: "#1e293b",
+    });
+    fabricRef.current = c;
+
+    // Mouse wheel zoom
+    c.on("mouse:wheel", (opt) => {
+      const delta = opt.e.deltaY;
+      let zoom = c.getZoom();
+      zoom *= 0.998 ** delta;
+      zoom = Math.min(Math.max(zoom, 0.05), 100);
+      c.zoomToPoint(new fabric.Point(opt.e.offsetX, opt.e.offsetY), zoom);
+      setZoomLevel(zoom);
+      opt.e.preventDefault();
+      opt.e.stopPropagation();
+    });
+
+    // Pan
+    c.on("mouse:down", (opt) => {
+      if (mode === "pan") {
+        setIsPanning(true);
+        panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
+      }
+    });
+    c.on("mouse:move", (opt) => {
+      if (isPanning && mode === "pan") {
+        const vpt = c.viewportTransform!;
+        vpt[4] += opt.e.clientX - panStart.current.x;
+        vpt[5] += opt.e.clientY - panStart.current.y;
+        c.requestRenderAll();
+        panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
+      }
+    });
+    c.on("mouse:up", () => setIsPanning(false));
+
+    // Drawing: left click adds vertex
+    c.on("mouse:down", (opt) => {
+      if (opt.e.button !== 0) return;
+      if (mode === "pan" || mode === "select") return;
+
+      const pointer = c.getPointer(opt.e);
+      const pt: [number, number] = [pointer.x, pointer.y];
+
+      if (mode === "room") {
+        setCurrentRoom((prev) => {
+          const room = prev || { vertices: [], exclusions: [] };
+          return { ...room, vertices: [...room.vertices, pt] };
+        });
+      } else if (mode === "exclusion") {
+        setCurrentExcl((prev) => [...prev, pt]);
+      }
+    });
+
+    // Right click closes shape
+    c.on("mouse:down", (opt) => {
+      if (opt.e.button !== 2) return;
+      if (mode === "room" && currentRoom && currentRoom.vertices.length >= 3) {
+        finishRoom();
+      } else if (mode === "exclusion" && currentExcl.length >= 3) {
+        finishExclusion();
+      }
+    });
+    c.onContextMenu = () => false;
+
+    // Resize
+    const resize = () => {
+      c.setWidth(container.clientWidth);
+      c.setHeight(container.clientHeight);
+      c.requestRenderAll();
+    };
+    window.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      c.dispose();
+      fabricRef.current = null;
+    };
+  }, []);
+
+  // ===== Render DXF entities as SVG on canvas =====
+  useEffect(() => {
+    const c = fabricRef.current;
+    if (!c || !dxfData) return;
+
+    // Clear all non-room objects
+    const toRemove = c
+      .getObjects()
+      .filter(
+        (o: any) =>
+          o._type !== "room" && o._type !== "excl" && o._type !== "label",
+      );
+    toRemove.forEach((o) => c.remove(o));
+
+    const [xmin, ymin, xmax, ymax] = dxfData.bounds;
+    const w = xmax - xmin || 1;
+    const h = ymax - ymin || 1;
+    const pad = w * 0.05;
+
+    // Draw each entity
+    for (const feat of dxfData.features) {
+      try {
+        if (
+          feat.properties.type === "LINE" ||
+          feat.properties.type === "LWPOLYLINE"
+        ) {
+          const coords = feat.geometry.coordinates as number[][];
+          if (coords.length < 2) continue;
+          const pts = coords.map((p) => ({ x: p[0], y: p[1] }));
+          // Normalize to canvas coords
+          const scaleX = 1 / (w + 2 * pad);
+          const scaleY = 1 / (h + 2 * pad);
+          const norm = pts.map((p) => ({
+            x: (p.x - xmin + pad) * scaleX * c.width!,
+            y: (p.y - ymin + pad) * scaleY * c.height!,
+          }));
+          const line = new fabric.Polyline(norm, {
+            stroke: "#475569",
+            strokeWidth: 1,
+            fill: "transparent",
+            selectable: false,
+            evented: false,
+            _type: "bg",
+          });
+          c.add(line);
+        } else if (feat.properties.type === "MTEXT") {
+          const coord = feat.geometry.coordinates as number[];
+          const scaleX = c.width! / (w + 2 * pad);
+          const scaleY = c.height! / (h + 2 * pad);
+          const x = (coord[0] - xmin + pad) * scaleX;
+          const y = (coord[1] - ymin + pad) * scaleY;
+          const txt = new fabric.Text(feat.properties.text || "", {
+            left: x,
+            top: y,
+            fontSize: Math.max(feat.properties.height || 3, 6),
+            fill: "#64748b",
+            selectable: false,
+            evented: false,
+            _type: "bg",
+          });
+          c.add(txt);
+        }
+      } catch {}
+    }
+    c.renderAll();
+  }, [dxfData]);
+
+  // ===== Re-render rooms when rooms change =====
+  useEffect(() => {
+    const c = fabricRef.current;
+    if (!c) return;
+
+    // Remove old rooms
+    const toRemove = c
+      .getObjects()
+      .filter(
+        (o: any) =>
+          o._type === "room" || o._type === "excl" || o._type === "label",
+      );
+    toRemove.forEach((o) => c.remove(o));
+
+    // Draw each room
+    for (const room of rooms) {
+      if (room.vertices.length >= 3) {
+        const pts = room.vertices.map((p) => ({ x: p[0], y: p[1] }));
+        const poly = new fabric.Polygon(pts, {
+          fill: ROOM_FILL,
+          stroke: ROOM_COLOR,
+          strokeWidth: 2,
+          selectable: false,
+          evented: false,
+          _type: "room",
+        });
+        c.add(poly);
+
+        // Label
+        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+        const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        const label = new fabric.Text(
+          `${room.name}\n${room.area?.toFixed(1) || ""}m²`,
+          {
+            left: cx,
+            top: cy,
+            fontSize: 13,
+            fill: "#e2e8f0",
+            originX: "center",
+            originY: "center",
+            selectable: false,
+            evented: false,
+            _type: "label",
+          },
+        );
+        c.add(label);
+      }
+
+      // Exclusion polygons
+      for (const exc of room.exclusions) {
+        if (exc.length >= 3) {
+          const pts = exc.map((p) => ({ x: p[0], y: p[1] }));
+          const poly = new fabric.Polygon(pts, {
+            fill: EXCL_FILL,
+            stroke: EXCL_COLOR,
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+            _type: "excl",
+          });
+          c.add(poly);
+        }
+      }
+    }
+    c.renderAll();
+  }, [rooms]);
+
+  // ===== Render current drawing =====
+  useEffect(() => {
+    const c = fabricRef.current;
+    if (!c) return;
+
+    // Remove temp objects
+    const toRemove = c.getObjects().filter((o: any) => o._temp);
+    toRemove.forEach((o) => c.remove(o));
+
+    if (currentRoom && currentRoom.vertices.length >= 2) {
+      const pts = currentRoom.vertices.map((p) => ({ x: p[0], y: p[1] }));
+      if (pts.length >= 3) {
+        const poly = new fabric.Polygon(pts, {
+          fill: "rgba(16, 185, 129, 0.12)",
+          stroke: ROOM_COLOR,
+          strokeWidth: 2,
+          selectable: false,
+          evented: false,
+          _temp: true,
+        });
+        c.add(poly);
+      }
+      // Vertex dots
+      pts.forEach((p) => {
+        const dot = new fabric.Circle({
+          left: p.x - 3,
+          top: p.y - 3,
+          radius: 3,
+          fill: ROOM_COLOR,
+          selectable: false,
+          evented: false,
+          _temp: true,
+        });
+        c.add(dot);
+      });
+    }
+
+    if (currentExcl.length >= 2) {
+      const pts = currentExcl.map((p) => ({ x: p[0], y: p[1] }));
+      if (pts.length >= 3) {
+        const poly = new fabric.Polygon(pts, {
+          fill: "rgba(239, 68, 68, 0.15)",
+          stroke: EXCL_COLOR,
+          strokeWidth: 2,
+          selectable: false,
+          evented: false,
+          _temp: true,
+        });
+        c.add(poly);
+      }
+      pts.forEach((p) => {
+        const dot = new fabric.Circle({
+          left: p.x - 3,
+          top: p.y - 3,
+          radius: 3,
+          fill: EXCL_COLOR,
+          selectable: false,
+          evented: false,
+          _temp: true,
+        });
+        c.add(dot);
+      });
+    }
+
+    c.renderAll();
+  }, [currentRoom, currentExcl]);
+
+  // ===== Actions =====
+  const finishRoom = useCallback(() => {
+    if (!currentRoom || currentRoom.vertices.length < 3) return;
+
+    const name = `Room ${rooms.length + 1}`;
+    const newRoom: RoomData = {
+      id: nextId(),
+      name,
+      vertices: currentRoom.vertices,
+      exclusions: currentRoom.exclusions,
+    };
+
+    onRoomsChange([...rooms, newRoom]);
+    setCurrentRoom(null);
+    setCurrentExcl([]);
+  }, [currentRoom, rooms, onRoomsChange]);
+
+  const finishExclusion = useCallback(() => {
+    if (currentExcl.length < 3 || !currentRoom) return;
+    setCurrentRoom({
+      ...currentRoom,
+      exclusions: [...currentRoom.exclusions, [...currentExcl]],
+    });
+    setCurrentExcl([]);
+  }, [currentExcl, currentRoom]);
+
+  const handleUndo = useCallback(() => {
+    if (mode === "exclusion" && currentExcl.length > 0) {
+      setCurrentExcl((p) => p.slice(0, -1));
+      return;
+    }
+    if (currentRoom && currentRoom.vertices.length > 0) {
+      setCurrentRoom((p) =>
+        p ? { ...p, vertices: p.vertices.slice(0, -1) } : null,
+      );
+      return;
+    }
+    if (rooms.length > 0) {
+      onRoomsChange(rooms.slice(0, -1));
+    }
+  }, [mode, currentExcl, currentRoom, rooms, onRoomsChange]);
+
+  const handleDeleteSelected = useCallback(() => {
+    if (rooms.length > 0) {
+      onRoomsChange(rooms.slice(0, -1));
+    }
+  }, [rooms, onRoomsChange]);
+
+  const handleFitView = useCallback(() => {
+    const c = fabricRef.current;
+    if (!c) return;
+    c.setZoom(1);
+    c.viewportTransform = [1, 0, 0, 1, 0, 0];
+    c.requestRenderAll();
+    setZoomLevel(1);
+  }, []);
+
+  const totalArea = rooms.reduce((s, r) => s + (r.area || 0), 0);
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Toolbar */}
+      <Toolbar
+        mode={mode}
+        onModeChange={(m) => setMode(m)}
+        onUndo={handleUndo}
+        onFitView={handleFitView}
+        onDelete={handleDeleteSelected}
+        onFinishRoom={finishRoom}
+        onCalculate={onCalculate}
+        calculating={calculating}
+        roomCount={rooms.length}
+        totalArea={totalArea}
+      />
+
+      {/* Canvas + Sidebar */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Canvas container */}
+        <div
+          ref={containerRef}
+          className="flex-1 relative overflow-hidden"
+          style={{
+            cursor:
+              mode === "pan"
+                ? "grab"
+                : mode === "select"
+                  ? "default"
+                  : "crosshair",
+          }}
+        >
+          <canvas ref={canvasRef} />
+        </div>
+
+        {/* Room sidebar */}
+        <RoomPanel
+          rooms={rooms}
+          onRoomsChange={onRoomsChange}
+          currentRoom={currentRoom}
+          currentExcl={currentExcl}
+          onFinishRoom={finishRoom}
+          onFinishExclusion={finishExclusion}
+        />
+      </div>
+    </div>
+  );
+}

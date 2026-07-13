@@ -11,6 +11,10 @@ __pycache__/
 !sample.dxf
 !sample2.dxf
 
+# Node / Frontend
+node_modules/
+webapp/app/node_modules/
+
 # IDE Settings
 .vscode/
 .idea/
