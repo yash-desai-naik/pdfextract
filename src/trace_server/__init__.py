@@ -14,15 +14,20 @@ import tempfile
 from pathlib import Path
 
 import ezdxf
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 app = FastAPI(title="Warmset Trace Tool")
 
-templates_dir = str(Path(__file__).parent / "templates")
-templates = Jinja2Templates(directory=templates_dir)
+_HERE = Path(__file__).parent
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """Serve the interactive trace tool UI."""
+    html_path = _HERE / "templates" / "trace_tool.html"
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
 
 
 # ── In-memory store for loaded drawings ──────────────────────
