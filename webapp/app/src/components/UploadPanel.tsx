@@ -23,33 +23,54 @@ export default function UploadPanel({ onComplete, onError }: Props) {
       const formData = new FormData();
       formData.append("file", file);
 
+      console.log("[Upload] Starting conversion for:", file.name, file.size);
       try {
-        // Step 1: Convert PDF → DXF
+        // Step 1: Convert PDF → DXF (with 120s timeout)
+        console.log("[Upload] POST /api/convert");
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120000);
         const convResp = await fetch("/api/convert", {
           method: "POST",
           body: formData,
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
+        console.log("[Upload] /api/convert status:", convResp.status);
         if (!convResp.ok) {
           const err = await convResp.text();
+          console.error("[Upload] Convert failed:", err);
           throw new Error(err);
         }
         const convResult = await convResp.json();
+        console.log(
+          "[Upload] Convert OK:",
+          convResult.entity_count,
+          "entities, scale:",
+          convResult.scale,
+        );
 
         // Step 2: Load DXF entities
+        console.log("[Upload] GET /api/dxf/entities");
         const dxfResp = await fetch(
-          `/api/dxf/entities?path=${encodeURIComponent(convResult.dxf_path)}`
+          `/api/dxf/entities?path=${encodeURIComponent(convResult.dxf_path)}`,
         );
         if (!dxfResp.ok) throw new Error("Failed to load DXF");
         const dxfData: DXFData = await dxfResp.json();
+        console.log("[Upload] DXF loaded:", dxfData.entity_count, "features");
 
         onComplete(convResult.dxf_path, dxfData, convResult.scale || {});
       } catch (e: any) {
-        onError(e.message || "Upload failed");
+        console.error("[Upload] Error:", e);
+        if (e.name === "AbortError") {
+          onError("Conversion timed out after 120s — try a smaller PDF");
+        } else {
+          onError(e.message || "Upload failed");
+        }
       } finally {
         setUploading(false);
       }
     },
-    [onComplete, onError]
+    [onComplete, onError],
   );
 
   const onDrop = useCallback(
@@ -59,7 +80,7 @@ export default function UploadPanel({ onComplete, onError }: Props) {
       const file = e.dataTransfer.files[0];
       if (file) handleFile(file);
     },
-    [handleFile]
+    [handleFile],
   );
 
   return (
@@ -77,13 +98,16 @@ export default function UploadPanel({ onComplete, onError }: Props) {
           Underfloor Heating Takeoff
         </h2>
         <p className="text-sm text-slate-400 mb-8 max-w-sm mx-auto leading-relaxed">
-          Upload a PDF architectural drawing. We'll convert it to DXF, then you can
-          trace rooms and calculate Warmset heating requirements.
+          Upload a PDF architectural drawing. We'll convert it to DXF, then you
+          can trace rooms and calculate Warmset heating requirements.
         </p>
 
         {/* Drop zone */}
         <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
           onClick={() => inputRef.current?.click()}
@@ -128,7 +152,9 @@ export default function UploadPanel({ onComplete, onError }: Props) {
         {/* Info */}
         <div className="mt-6 flex items-center justify-center gap-2 text-xs text-slate-600">
           <AlertCircle className="w-3.5 h-3.5" strokeWidth={1.5} />
-          <span>Drawing stays on your machine — no data is uploaded to any cloud</span>
+          <span>
+            Drawing stays on your machine — no data is uploaded to any cloud
+          </span>
         </div>
       </div>
     </div>

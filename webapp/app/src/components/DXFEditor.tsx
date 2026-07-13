@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import fabric from "fabric";
-const { Canvas, Polyline, Polygon, Circle, Text, Point, Rect } = fabric;
+import { fabric } from "fabric";
 import type { DXFData, RoomData, EditorMode } from "../types";
 import RoomPanel from "./RoomPanel";
 import Toolbar from "./Toolbar";
