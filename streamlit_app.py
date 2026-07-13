@@ -1,22 +1,22 @@
+import json
 import os
+import shutil
 import sys
 import tempfile
-import shutil
-import json
-from zipfile import ZipFile
 from pathlib import Path
+from zipfile import ZipFile
 
-import streamlit as st
 import fitz
-from PIL import Image, ImageDraw
 import pandas as pd
+import streamlit as st
+from PIL import Image, ImageDraw
 
 try:
     from streamlit_drawable_canvas import st_canvas
 except ImportError:
     st_canvas = None
 
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
 try:
     from converter import PDF2DXFConverter
@@ -24,14 +24,14 @@ except ImportError:
     st.error("Could not import converter. Make sure 'src/converter.py' exists.")
     st.stop()
 
-from src.utils.logging import setup_logging
-from src.models.rooms import Room, ExclusionArea
+from src.heating.calculator import HeatingCalculator
 from src.heating.polygons import HeatingPolygonGenerator
 from src.heating.strips import WarmsetStripGenerator
-from src.heating.calculator import HeatingCalculator
+from src.models.rooms import ExclusionArea, Room
 from src.report.json_report import JSONReport
-from src.report.xlsx_report import XLSXReport
 from src.report.pdf_report import PDFReport
+from src.report.xlsx_report import XLSXReport
+from src.utils.logging import setup_logging
 
 setup_logging(level="ERROR")
 
@@ -39,7 +39,7 @@ st.set_page_config(
     page_title="Warmset CAD Engine",
     page_icon="🔥",
     layout="wide",
-    menu_items={'Get Help': None, 'Report a bug': None, 'About': None}
+    menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
 
 hide_menu = """
@@ -61,7 +61,9 @@ with tab_convert:
     st.title("📐 PDF to DXF Converter")
     st.markdown("Convert PDF drawings to DXF format.")
 
-    uploaded_files = st.file_uploader("Choose PDF file(s)", type="pdf", accept_multiple_files=True, key="conv_files")
+    uploaded_files = st.file_uploader(
+        "Choose PDF file(s)", type="pdf", accept_multiple_files=True, key="conv_files"
+    )
 
     with st.sidebar:
         st.header("Extract Content")
@@ -102,10 +104,15 @@ with tab_convert:
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
                 canvas = st_canvas(
-                    fill_color="rgba(255,0,0,0.3)", stroke_width=2,
-                    stroke_color="red", background_image=img,
-                    update_streamlit=True, height=img.height, width=img.width,
-                    drawing_mode="rect", key="crop_canvas",
+                    fill_color="rgba(255,0,0,0.3)",
+                    stroke_width=2,
+                    stroke_color="red",
+                    background_image=img,
+                    update_streamlit=True,
+                    height=img.height,
+                    width=img.width,
+                    drawing_mode="rect",
+                    key="crop_canvas",
                 )
                 if canvas.json_data and canvas.json_data["objects"]:
                     obj = canvas.json_data["objects"][-1]
@@ -114,10 +121,14 @@ with tab_convert:
                     x1, x2 = min(x, x + w), max(x, x + w)
                     y1, y2 = min(y, y + h), max(y, y + h)
                     crop = (
-                        max(0, x1 / scale), max(0, y1 / scale),
-                        min(pw, x2 / scale), min(ph, y2 / scale),
+                        max(0, x1 / scale),
+                        max(0, y1 / scale),
+                        min(pw, x2 / scale),
+                        min(ph, y2 / scale),
                     )
-                    st.session_state.crop_rect = crop if crop[0] < crop[2] and crop[1] < crop[3] else None
+                    st.session_state.crop_rect = (
+                        crop if crop[0] < crop[2] and crop[1] < crop[3] else None
+                    )
             elif enable_crop:
                 st.warning("Install streamlit-drawable-canvas for crop UI.")
 
@@ -146,10 +157,13 @@ with tab_convert:
                             pages = list(range(p1 - 1, p2))
                             if pages:
                                 PDF2DXFConverter(inpath).convert(
-                                    outpath, pages=pages,
+                                    outpath,
+                                    pages=pages,
                                     crop_rect=st.session_state.crop_rect,
-                                    min_size=min_size, skip_curves=skip_curves,
-                                    include_geom=include_geom, include_text=include_text,
+                                    min_size=min_size,
+                                    skip_curves=skip_curves,
+                                    include_geom=include_geom,
+                                    include_text=include_text,
                                 )
                         except Exception as e:
                             st.error(f"Error: {e}")
@@ -160,7 +174,9 @@ with tab_convert:
                         st.error("No DXF generated.")
                     elif len(dxfs) == 1:
                         with open(os.path.join(tmpdir, dxfs[0]), "rb") as f:
-                            st.download_button("Download DXF", f, dxfs[0], "application/dxf")
+                            st.download_button(
+                                "Download DXF", f, dxfs[0], "application/dxf"
+                            )
                         st.success("Done!")
                     else:
                         zippath = os.path.join(tmpdir, "dxfs.zip")
@@ -168,7 +184,9 @@ with tab_convert:
                             for f in dxfs:
                                 z.write(os.path.join(tmpdir, f), f)
                         with open(zippath, "rb") as f:
-                            st.download_button("Download All (ZIP)", f, "dxfs.zip", "application/zip")
+                            st.download_button(
+                                "Download All (ZIP)", f, "dxfs.zip", "application/zip"
+                            )
                         st.success(f"{len(dxfs)} files generated.")
 
 # ============================================================
@@ -177,9 +195,37 @@ with tab_convert:
 
 with tab_takeoff:
     st.title("🔥 Warmset Takeoff")
-    st.markdown("Trace rooms and exclusions on your plan, then generate a heating report.")
 
-    uploaded = st.file_uploader("Upload PDF or DXF", type=["pdf", "dxf"], key="takeoff_file")
+    # ---- Trace Server (lazy launch) ----
+    if "trace_server_url" not in st.session_state:
+        st.session_state.trace_server_url = None
+
+    trace_url = st.session_state.trace_server_url
+
+    if trace_url:
+        st.success(f"Trace server running at {trace_url}")
+    else:
+        if st.button("🚀 Launch Trace Server"):
+            import subprocess
+            import threading
+
+            def _start():
+                subprocess.Popen(
+                    [sys.executable, "-m", "src.trace_server"],
+                    cwd=os.path.dirname(os.path.abspath(__file__)),
+                )
+
+            threading.Thread(target=_start, daemon=True).start()
+            st.session_state.trace_server_url = "http://localhost:8520"
+            st.rerun()
+
+    st.markdown(
+        "Trace rooms and exclusions on your plan, then generate a heating report."
+    )
+
+    uploaded = st.file_uploader(
+        "Upload PDF or DXF", type=["pdf", "dxf"], key="takeoff_file"
+    )
 
     if uploaded:
         suffix = os.path.splitext(uploaded.name)[1].lower()
@@ -198,15 +244,38 @@ with tab_takeoff:
             page = doc[0]
             pw, ph = page.rect.width, page.rect.height
             display_scale = min(1.0, 1000.0 / pw)
-            pix = page.get_pixmap(matrix=fitz.Matrix(display_scale, display_scale), alpha=False)
+            pix = page.get_pixmap(
+                matrix=fitz.Matrix(display_scale, display_scale), alpha=False
+            )
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            pixel_to_mm = 1.0 / display_scale * 25.4 / 72.0
+
+            # Resolve scale from PDF title block (replaces hardcoded 25.4/72)
+            from src.cad.scale_resolver import ScaleResolver
+
+            page_text = doc[0].get_text()
+            scale_result = ScaleResolver().resolve_from_text(page_text, page=0)
+            # mm per pixel = (1/display_scale) * mm_per_pdf_point
+            pixel_to_mm = (1.0 / display_scale) * scale_result.mm_per_pdf_point
+            st.session_state.pdf_scale = scale_result
+
+            # Extract structured data (room names, areas, schedule) from PDF
+            try:
+                from src.extraction.pdf_data_extractor import PdfDataExtractor
+
+                extractor = PdfDataExtractor()
+                extraction = extractor.extract(doc[0])
+                st.session_state.pdf_extraction = extraction.to_dict()
+            except Exception as e:
+                st.warning(f"PDF data extraction failed: {e}")
+                st.session_state.pdf_extraction = None
             doc.close()
         else:
             import ezdxf
             import matplotlib
+
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+
             from src.cad.units import UnitDetector
 
             doc = ezdxf.readfile(tmppath)
@@ -225,7 +294,8 @@ with tab_takeoff:
                         ys += [e.dxf.start.y, e.dxf.end.y]
                     elif t == "LWPOLYLINE":
                         for p in e.get_points("xy"):
-                            xs.append(p[0]); ys.append(p[1])
+                            xs.append(p[0])
+                            ys.append(p[1])
                     elif t == "CIRCLE":
                         xs.append(e.dxf.center.x - e.dxf.radius)
                         xs.append(e.dxf.center.x + e.dxf.radius)
@@ -237,9 +307,11 @@ with tab_takeoff:
                         ys.append(e.dxf.center.y - e.dxf.radius)
                         ys.append(e.dxf.center.y + e.dxf.radius)
                     elif t == "MTEXT":
-                        xs.append(e.dxf.insert.x); ys.append(e.dxf.insert.y)
+                        xs.append(e.dxf.insert.x)
+                        ys.append(e.dxf.insert.y)
                     elif t == "TEXT":
-                        xs.append(e.dxf.insert.x); ys.append(e.dxf.insert.y)
+                        xs.append(e.dxf.insert.x)
+                        ys.append(e.dxf.insert.y)
                 except Exception:
                     pass
 
@@ -261,8 +333,13 @@ with tab_takeoff:
                 try:
                     t = e.dxftype()
                     if t == "LINE":
-                        ax.plot([e.dxf.start.x, e.dxf.end.x], [e.dxf.start.y, e.dxf.end.y],
-                                "k-", lw=0.3, alpha=0.6)
+                        ax.plot(
+                            [e.dxf.start.x, e.dxf.end.x],
+                            [e.dxf.start.y, e.dxf.end.y],
+                            "k-",
+                            lw=0.3,
+                            alpha=0.6,
+                        )
                     elif t == "LWPOLYLINE":
                         pts = e.get_points("xy")
                         px = [p[0] for p in pts] + [pts[0][0]]
@@ -275,14 +352,119 @@ with tab_takeoff:
                     pass
 
             from io import BytesIO
+
             buf = BytesIO()
-            fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+            fig.savefig(buf, format="png", bbox_inches="tight", dpi=150)
             buf.seek(0)
             img = Image.open(buf).copy()
             buf.close()
             plt.close(fig)
 
-        # ---- Canvas for tracing ----
+        # ---- Scale confirmation ----
+        scale_info = st.session_state.get("pdf_scale")
+        if scale_info:
+            c = scale_info.confidence
+            r = scale_info.scale_ratio
+            src = scale_info.source
+            icon = {"high": "✓", "medium": "?", "low": "⚠"}.get(c, "?")
+            st.info(
+                f"{icon} Scale: 1:{r} (from {src}, {c} confidence)",
+                icon=None,
+            )
+            if c != "high":
+                st.warning(
+                    "Low-confidence scale. After tracing, check room areas "
+                    "against the printed drawing."
+                )
+        else:
+            st.info("Scale: from DXF header (unit-to-m conversion)")
+
+        # ---- PDF data extraction display ----
+        extraction = st.session_state.get("pdf_extraction")
+        if extraction:
+            n_rooms = len(extraction.get("rooms", []))
+            n_schedule = len(extraction.get("heating_schedule", []))
+            n_dims = len(extraction.get("dimension_strings", []))
+            st.success(
+                f"Extracted {n_rooms} rooms, {n_schedule} schedule entries, "
+                f"{n_dims} dimensions from PDF"
+            )
+            with st.expander("📋 Extracted PDF Data (auto-detected)", expanded=False):
+                rooms_data = extraction.get("rooms", [])
+                if rooms_data:
+                    st.markdown("**Detected Rooms**")
+                    for r in rooms_data:
+                        area = r.get("printed_area_sqm")
+                        if area:
+                            st.markdown(f"- {r['name']}: **{area:.2f} m²**")
+                        else:
+                            st.markdown(f"- {r['name']}")
+
+                schedule = extraction.get("heating_schedule", [])
+                if schedule:
+                    st.markdown("**Heating Schedule**")
+                    for h in schedule[:10]:
+                        mats = ", ".join(h.get("mat_number", []))
+                        watt = h.get("installed_wattage_w")
+                        parts = []
+                        if mats:
+                            parts.append(mats)
+                        if watt:
+                            parts.append(f"{watt:.0f} W")
+                        if h.get("mat_size_sqm"):
+                            parts.append(f"{h['mat_size_sqm']:.2f} m²")
+                        st.markdown(f"- {h['room'] or '?'}: {' | '.join(parts)}")
+
+                dims = extraction.get("dimension_strings", [])
+                if dims:
+                    st.markdown(f"**{len(dims)} dimension strings found**")
+
+                # Download button for full JSON
+                import json as _json
+
+                json_str = _json.dumps(extraction, indent=2, ensure_ascii=False)
+                st.download_button(
+                    "📥 Download JSON",
+                    data=json_str,
+                    file_name="pdf_extraction.json",
+                    mime="application/json",
+                )
+
+        # ---- Vector Trace Tool (iframe) ----
+        trace_url = st.session_state.get("trace_server_url")
+        if trace_url:
+            # For DXFs, use directly; for PDFs, convert first then use
+            trace_dxf_path = tmppath if suffix == ".dxf" else None
+
+            # Convert PDF to DXF for the trace tool
+            if suffix == ".pdf" and trace_dxf_path is None:
+                dxf_tmp = os.path.join(tmpdir, "trace_export.dxf")
+                try:
+                    from converter import PDF2DXFConverter
+
+                    conv = PDF2DXFConverter(tmppath)
+                    conv.load_pdf()
+                    conv.convert(dxf_tmp, pages=[0], include_text=True)
+                    trace_dxf_path = dxf_tmp
+                except Exception as e:
+                    st.warning(f"Could not convert PDF for trace tool: {e}")
+
+            if trace_dxf_path and os.path.exists(trace_dxf_path):
+                st.markdown("### 🎯 Vector Trace Tool")
+                st.markdown(
+                    "Zoom with mouse wheel, pan with middle-click/pan mode. "
+                    "Draw rooms (green) and exclusions (red)."
+                )
+                iframe_url = f"{trace_url}/?dxf={trace_dxf_path}"
+                st.components.v1.iframe(
+                    iframe_url,
+                    height=700,
+                    scrolling=True,
+                )
+            else:
+                st.info("Convert to DXF first, then use the vector trace tool.")
+
+        # ---- Legacy Canvas (fallback) ----
         st.markdown("### 1. Trace Rooms")
         st.markdown(
             "Select **freeform** or **polygon** mode, then draw on the plan. "
@@ -290,8 +472,10 @@ with tab_takeoff:
         )
 
         draw_mode = st.radio(
-            "Draw mode", ["polygon", "freeform", "rect"],
-            horizontal=True, index=0,
+            "Draw mode",
+            ["polygon", "freeform", "rect"],
+            horizontal=True,
+            index=0,
         )
 
         canvas_result = st_canvas(
@@ -313,6 +497,7 @@ with tab_takeoff:
 
         # Compute hash of current canvas to detect changes
         import hashlib
+
         current_hash = None
         if canvas_result and canvas_result.json_data:
             raw = json.dumps(canvas_result.json_data.get("objects", []), sort_keys=True)
@@ -340,23 +525,31 @@ with tab_takeoff:
                     w = obj["width"] * obj.get("scaleX", 1)
                     h = obj["height"] * obj.get("scaleY", 1)
                     raw_pts = [
-                        {"x": x, "y": y}, {"x": x + w, "y": y},
-                        {"x": x + w, "y": y + h}, {"x": x, "y": y + h},
+                        {"x": x, "y": y},
+                        {"x": x + w, "y": y},
+                        {"x": x + w, "y": y + h},
+                        {"x": x, "y": y + h},
                     ]
 
                 if raw_pts and len(raw_pts) >= 3:
                     if pixel_to_mm is not None:
-                        verts = [(p["x"] * pixel_to_mm, p["y"] * pixel_to_mm) for p in raw_pts]
+                        verts = [
+                            (p["x"] * pixel_to_mm, p["y"] * pixel_to_mm)
+                            for p in raw_pts
+                        ]
                     elif bounds is not None:
                         iw, ih = img.width, img.height
                         bx0, bx1, by0, by1 = bounds
                         dx = (bx1 - bx0) / iw
                         dy = (by1 - by0) / ih
-                        verts = [(bx0 + p["x"] * dx, by0 + p["y"] * dy) for p in raw_pts]
+                        verts = [
+                            (bx0 + p["x"] * dx, by0 + p["y"] * dy) for p in raw_pts
+                        ]
                     else:
                         verts = [(p["x"], p["y"]) for p in raw_pts]
 
                     from shapely.geometry import Polygon as SPolygon
+
                     try:
                         poly = SPolygon(verts)
                         if poly.is_valid and poly.area > 0.01:
@@ -364,18 +557,22 @@ with tab_takeoff:
                                 area_m = poly.area / 1_000_000
                                 verts_m = [(x / 1000, y / 1000) for x, y in verts]
                             elif unit_to_m is not None:
-                                area_m = poly.area * (unit_to_m ** 2)
-                                verts_m = [(x * unit_to_m, y * unit_to_m) for x, y in verts]
+                                area_m = poly.area * (unit_to_m**2)
+                                verts_m = [
+                                    (x * unit_to_m, y * unit_to_m) for x, y in verts
+                                ]
                             else:
                                 area_m = poly.area
                                 verts_m = verts
 
-                            new_rooms.append({
-                                "name": "",
-                                "vertices": verts_m,
-                                "area_m2": round(area_m, 2),
-                                "is_exclusion": False,
-                            })
+                            new_rooms.append(
+                                {
+                                    "name": "",
+                                    "vertices": verts_m,
+                                    "area_m2": round(area_m, 2),
+                                    "is_exclusion": False,
+                                }
+                            )
                     except Exception:
                         pass
 
@@ -395,12 +592,15 @@ with tab_takeoff:
                 uid = f"{st.session_state.canvas_hash or 'nocanvas'}_{i}"
                 with cols[0]:
                     room["name"] = cols[0].text_input(
-                        f"Shape {i+1} ({room['area_m2']} m²)",
-                        value=room["name"], key=f"name_{uid}",
+                        f"Shape {i + 1} ({room['area_m2']} m²)",
+                        value=room["name"],
+                        key=f"name_{uid}",
                     )
                 with cols[1]:
                     room["is_exclusion"] = cols[1].checkbox(
-                        "Exclusion", value=room["is_exclusion"], key=f"excl_{uid}",
+                        "Exclusion",
+                        value=room["is_exclusion"],
+                        key=f"excl_{uid}",
                     )
                 with cols[2]:
                     if cols[2].button("✕", key=f"del_{uid}"):
@@ -415,13 +615,15 @@ with tab_takeoff:
                 c1, c2, c3 = st.columns([3, 1, 1])
                 with c1:
                     name = c1.text_input(
-                        f"Room {i+1} ({room['area_m2']} m²)",
+                        f"Room {i + 1} ({room['area_m2']} m²)",
                         value=room["name"],
                         key=f"name_{i}",
                     )
                     st.session_state.rooms[i]["name"] = name
                 with c2:
-                    excl = c2.checkbox("Exclusion", value=room["is_exclusion"], key=f"excl_{i}")
+                    excl = c2.checkbox(
+                        "Exclusion", value=room["is_exclusion"], key=f"excl_{i}"
+                    )
                     st.session_state.rooms[i]["is_exclusion"] = excl
                 with c3:
                     if c3.button("🗑", key=f"del_{i}"):
@@ -438,6 +640,7 @@ with tab_takeoff:
 
                     for r in st.session_state.rooms:
                         from shapely.geometry import Polygon as SPolygon
+
                         poly = SPolygon(r["vertices"])
                         if r["is_exclusion"]:
                             continue
@@ -454,12 +657,16 @@ with tab_takeoff:
                             if other["is_exclusion"] and other["name"]:
                                 try:
                                     other_poly = SPolygon(other["vertices"])
-                                    if other_poly.intersects(poly) or poly.contains(other_poly):
-                                        room.exclusions.append(ExclusionArea(
-                                            polygon=other_poly,
-                                            reason=other["name"],
-                                            source_type="manual",
-                                        ))
+                                    if other_poly.intersects(poly) or poly.contains(
+                                        other_poly
+                                    ):
+                                        room.exclusions.append(
+                                            ExclusionArea(
+                                                polygon=other_poly,
+                                                reason=other["name"],
+                                                source_type="manual",
+                                            )
+                                        )
                                 except Exception:
                                     pass
                         engine_rooms.append(room)
@@ -479,18 +686,27 @@ with tab_takeoff:
                     totals = calculator.totals(engine_rooms)
 
                     quality = {
-                        "suitability_score": 95, "reconstruction_confidence": 95,
-                        "verdict": "User-traced geometry", "drawing_units": "m", "dxf_version": "N/A",
+                        "suitability_score": 95,
+                        "reconstruction_confidence": 95,
+                        "verdict": "User-traced geometry",
+                        "drawing_units": "m",
+                        "dxf_version": "N/A",
                     }
 
                     # Save reports
                     outdir = Path(tmpdir) / "reports"
                     outdir.mkdir(exist_ok=True)
-                    JSONReport().generate(engine_rooms, quality, totals, outdir / "report.json")
+                    JSONReport().generate(
+                        engine_rooms, quality, totals, outdir / "report.json"
+                    )
                     XLSXReport().generate(engine_rooms, totals, outdir / "report.xlsx")
-                    PDFReport().generate(engine_rooms, totals, quality, outdir / "report.pdf")
+                    PDFReport().generate(
+                        engine_rooms, totals, quality, outdir / "report.pdf"
+                    )
 
-                    st.success(f"✅ Takeoff complete — {len(engine_rooms)} rooms processed")
+                    st.success(
+                        f"✅ Takeoff complete — {len(engine_rooms)} rooms processed"
+                    )
                     st.balloons()
 
                     # ---- Results ----
@@ -499,24 +715,28 @@ with tab_takeoff:
                     # Summary table
                     rows = []
                     for room in engine_rooms:
-                        rows.append({
-                            "Room": room.name,
-                            "Gross m²": round(room.gross_area_m2, 2),
-                            "Excluded m²": round(room.excluded_area_m2, 2),
-                            "Setback m²": round(room.setback_area_m2, 2),
-                            "Net m²": round(room.net_heatable_area_m2, 2),
-                            "Strips": room.strip_count,
-                            "Linear m": round(room.total_linear_m, 1),
-                            "Mat m²": round(room.mat_area_m2, 2),
-                            "Coverage": f"{room.coverage_pct:.0f}%",
-                        })
+                        rows.append(
+                            {
+                                "Room": room.name,
+                                "Gross m²": round(room.gross_area_m2, 2),
+                                "Excluded m²": round(room.excluded_area_m2, 2),
+                                "Setback m²": round(room.setback_area_m2, 2),
+                                "Net m²": round(room.net_heatable_area_m2, 2),
+                                "Strips": room.strip_count,
+                                "Linear m": round(room.total_linear_m, 1),
+                                "Mat m²": round(room.mat_area_m2, 2),
+                                "Coverage": f"{room.coverage_pct:.0f}%",
+                            }
+                        )
                     df = pd.DataFrame(rows)
                     st.dataframe(df, use_container_width=True, hide_index=True)
 
                     # Totals
                     tc1, tc2, tc3, tc4 = st.columns(4)
                     tc1.metric("Total Gross", f"{totals['total_gross_area_m2']:.1f} m²")
-                    tc2.metric("Total Net", f"{totals['total_net_heatable_area_m2']:.1f} m²")
+                    tc2.metric(
+                        "Total Net", f"{totals['total_net_heatable_area_m2']:.1f} m²"
+                    )
                     tc3.metric("Total Mat", f"{totals['total_mat_area_m2']:.1f} m²")
                     tc4.metric("Total Linear", f"{totals['total_linear_m']:.0f} m")
 
@@ -530,19 +750,30 @@ with tab_takeoff:
                     # Download buttons
                     d1, d2, d3, d4 = st.columns(4)
                     with open(outdir / "report.json") as f:
-                        d1.download_button("📄 JSON", f, "report.json", "application/json")
+                        d1.download_button(
+                            "📄 JSON", f, "report.json", "application/json"
+                        )
                     with open(outdir / "report.xlsx", "rb") as f:
-                        d2.download_button("📊 Excel", f, "report.xlsx",
-                                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        d2.download_button(
+                            "📊 Excel",
+                            f,
+                            "report.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
                     with open(outdir / "report.pdf", "rb") as f:
-                        d3.download_button("📕 PDF Report", f, "report.pdf", "application/pdf")
+                        d3.download_button(
+                            "📕 PDF Report", f, "report.pdf", "application/pdf"
+                        )
 
                     # Save trace data for reuse
                     trace_data = {
                         "rooms": [
                             {
                                 "name": r["name"],
-                                "vertices": [[round(v, 4) for v in vert] for vert in r["vertices"]],
+                                "vertices": [
+                                    [round(v, 4) for v in vert]
+                                    for vert in r["vertices"]
+                                ],
                                 "is_exclusion": r["is_exclusion"],
                                 "area_m2": r["area_m2"],
                             }
@@ -550,7 +781,12 @@ with tab_takeoff:
                         ]
                     }
                     trace_json = json.dumps(trace_data, indent=2)
-                    d4.download_button("📋 Traced Rooms (JSON)", trace_json, "traced_rooms.json", "application/json")
+                    d4.download_button(
+                        "📋 Traced Rooms (JSON)",
+                        trace_json,
+                        "traced_rooms.json",
+                        "application/json",
+                    )
 
                     # Clear button
                     if st.button("🔄 Start Over"):
@@ -558,4 +794,6 @@ with tab_takeoff:
                         st.rerun()
 
     st.markdown("---")
-    st.caption("Trace rooms → Warmset engine calculates setbacks, strips, and coverage.")
+    st.caption(
+        "Trace rooms → Warmset engine calculates setbacks, strips, and coverage."
+    )

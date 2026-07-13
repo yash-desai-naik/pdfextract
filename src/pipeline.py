@@ -9,22 +9,23 @@ from typing import Optional
 
 import ezdxf
 
-from src.cad.parser import CADParser
 from src.cad.analyzer import CADQualityAnalyzer, QualityReport
-from src.cad.units import UnitDetector, LengthUnit
+from src.cad.parser import CADParser
+from src.cad.units import LengthUnit, UnitDetector
 from src.geometry.cleanup import GeometryCleaner
 from src.geometry.reconstruction import RoomReconstructor
-from src.heating.rooms import RoomLabeler, DimensionExtractor
+from src.heating.calculator import HeatingCalculator
 from src.heating.exclusions import ExclusionDetector
 from src.heating.polygons import HeatingPolygonGenerator
+from src.heating.rooms import DimensionExtractor, RoomLabeler
 from src.heating.strips import WarmsetStripGenerator
-from src.heating.calculator import HeatingCalculator
+from src.models.entities import EntityType
 from src.report.json_report import JSONReport
-from src.report.xlsx_report import XLSXReport
 from src.report.pdf_report import PDFReport
+from src.report.xlsx_report import XLSXReport
+from src.utils.config import Settings, get_settings, set_settings
 from src.utils.debugging import DebugVisualizer
 from src.utils.logging import get_logger, setup_logging
-from src.utils.config import Settings, get_settings, set_settings
 
 logger = get_logger("pipeline")
 
@@ -63,12 +64,19 @@ class CADPipeline:
     def warnings(self) -> list[str]:
         return list(self._warnings)
 
-    def run(self, dxf_path: str | Path, output_dir: str | Path = ".") -> PipelineResult:
+    def run(
+        self,
+        dxf_path: str | Path,
+        output_dir: str | Path = ".",
+        pdf_extraction: Optional[dict] = None,
+    ) -> PipelineResult:
         """Run the complete pipeline on a DXF file.
 
         Args:
             dxf_path: Path to the input DXF file.
             output_dir: Directory for output files.
+            pdf_extraction: Optional dict from PdfExtractionResult.to_dict().
+                           Provides scale override + printed room areas for cross-check.
 
         Returns:
             PipelineResult with all outputs.
@@ -102,16 +110,38 @@ class CADPipeline:
             quality = analyzer.analyze()
             result.quality_report = quality
             result.warnings.extend(quality.warnings)
-            logger.info("Quality: score=%.1f%% confidence=%.1f%%",
-                        quality.suitability_score, quality.reconstruction_confidence)
+            logger.info(
+                "Quality: score=%.1f%% confidence=%.1f%%",
+                quality.suitability_score,
+                quality.reconstruction_confidence,
+            )
             logger.info("Verdict: %s", quality.verdict)
 
-            # --- Stage 3: Unit Detection ---
+            # --- Stage 3: Unit Detection (with PDF scale override) ---
             logger.info("Stage 3: Unit detection...")
             detector = UnitDetector(doc)
-            result.units = detector.detect()
+            # If we have a PDF extraction with scale info, override unit detection
+            if pdf_extraction and "sheet" in pdf_extraction:
+                sheet_scale = pdf_extraction["sheet"].get("scale")
+                if sheet_scale and sheet_scale.get("mm_per_pdf_point"):
+                    # DXF is already in mm (from converter fix), so unit_to_m = 0.001
+                    logger.info(
+                        "Unit override from PDF scale: mm_per_pdf_point=%.4f",
+                        sheet_scale["mm_per_pdf_point"],
+                    )
+                    result.units = LengthUnit.MILLIMETRES
+                else:
+                    result.units = detector.detect()
+            else:
+                result.units = detector.detect()
             result.warnings.extend(detector.warnings)
-            logger.info("Units: %s (conversion=%.6f m/unit)", result.units.label, result.units.to_metres)
+            logger.info(
+                "Units: %s (conversion=%.6f m/unit)",
+                result.units.label,
+                result.units.to_metres,
+            )
+
+            conv = result.units.to_metres
 
             # --- Stage 4: Parse DXF ---
             logger.info("Stage 4: Parsing entities...")
@@ -121,23 +151,35 @@ class CADPipeline:
             total_ents = sum(len(v) for v in entities_raw.values())
             logger.info("Parsed %d entities from modelspace", total_ents)
 
-            conv = result.units.to_metres
-
             # --- Stage 5: Geometry Cleanup (in drawing units) ---
             logger.info("Stage 5: Geometry cleanup...")
             # Scale tolerances to drawing units
-            geo_settings = self.settings.geometry.model_copy(deep=True) if hasattr(self.settings.geometry, 'model_copy') else self.settings.geometry
+            geo_settings = (
+                self.settings.geometry.model_copy(deep=True)
+                if hasattr(self.settings.geometry, "model_copy")
+                else self.settings.geometry
+            )
             if conv != 1.0:
                 # Temporarily scale settings so tolerances match drawing units
                 import copy
+
                 safe_settings = copy.copy(self.settings)
                 safe_settings.geometry = copy.copy(self.settings.geometry)
-                safe_settings.geometry.snap_tolerance_m = self.settings.geometry.snap_tolerance_m / conv
-                safe_settings.geometry.merge_tolerance_m = self.settings.geometry.merge_tolerance_m / conv
-                safe_settings.geometry.min_segment_length_m = self.settings.geometry.min_segment_length_m / conv
-                safe_settings.geometry.simplification_tolerance_m = self.settings.geometry.simplification_tolerance_m / conv
+                safe_settings.geometry.snap_tolerance_m = (
+                    self.settings.geometry.snap_tolerance_m / conv
+                )
+                safe_settings.geometry.merge_tolerance_m = (
+                    self.settings.geometry.merge_tolerance_m / conv
+                )
+                safe_settings.geometry.min_segment_length_m = (
+                    self.settings.geometry.min_segment_length_m / conv
+                )
+                safe_settings.geometry.simplification_tolerance_m = (
+                    self.settings.geometry.simplification_tolerance_m / conv
+                )
                 # Temporarily set these settings
                 from src.utils.config import set_settings
+
                 old_settings = get_settings()
                 set_settings(safe_settings)
                 try:
@@ -158,6 +200,57 @@ class CADPipeline:
             else:
                 entities = entities_raw
 
+            # --- Stage 5b: Auto Topology Reconstruction (for PDF-origin DXFs) ---
+            # If quality is low (many disconnected segments, few closed polys),
+            # try to reconstruct room polygons from the line/segment soup.
+            room_reconstruction_attempted_from_topology = False
+            if (
+                quality.reconstruction_confidence < 40
+                and quality.closed_polygons == 0
+                and quality.line_count > 50
+            ):
+                logger.info("Stage 5b: Attempting topology reconstruction...")
+                from src.geometry.topology_builder import TopologyBuilder
+
+                segments = TopologyBuilder.segments_from_entities(entities)
+                if segments:
+                    builder = TopologyBuilder(
+                        snap_tolerance=self.settings.geometry.snap_tolerance_m
+                    )
+                    auto_polys = builder.build(
+                        segments,
+                        min_area_m2=self.settings.geometry.min_room_area_m2,
+                        max_area_m2=self.settings.geometry.max_room_area_m2,
+                    )
+                    result.warnings.extend(builder.warnings)
+                    if auto_polys:
+                        logger.info(
+                            "Topology built %d candidate room polygons", len(auto_polys)
+                        )
+                        # Inject these as LWPOLYLINE entities for RoomReconstructor
+                        from src.models.entities import CADLWPolyline
+
+                        lwpolylines = []
+                        for i, poly in enumerate(auto_polys):
+                            coords = list(poly.exterior.coords)[:-1]
+                            ent = CADLWPolyline(
+                                dxf_handle=f"AUTO_{i}",
+                                layer="ROOMS_AUTO",
+                                entity_type=EntityType.LWPOLYLINE,
+                                points=[(x, y) for x, y in coords],
+                                closed=True,
+                            )
+                            lwpolylines.append(ent)
+                        existing = entities.get(EntityType.LWPOLYLINE, [])
+                        if existing is None:
+                            existing = []
+                        entities[EntityType.LWPOLYLINE] = existing + lwpolylines
+                        room_reconstruction_attempted_from_topology = True
+                        logger.info(
+                            "Added %d auto-reconstructed LWPOLYLINEs for room detection",
+                            len(lwpolylines),
+                        )
+
             # --- Stage 6: Room Reconstruction ---
             logger.info("Stage 6: Room reconstruction...")
             reconstructor = RoomReconstructor()
@@ -168,6 +261,28 @@ class CADPipeline:
                 logger.warning("No rooms reconstructed — cannot continue")
                 result.success = False
                 return result
+
+            # Cross-check: validate traced/reconstructed areas against printed values
+            if pdf_extraction and "rooms" in pdf_extraction:
+                for room in rooms:
+                    for printed in pdf_extraction["rooms"]:
+                        pname = printed.get("name", "").upper()
+                        parea = printed.get("printed_area_sqm")
+                        if pname and parea and pname == room.name.upper():
+                            diff_pct = (
+                                abs(room.gross_area_m2 - parea) / max(parea, 0.01) * 100
+                            )
+                            if diff_pct > 5:
+                                msg = (
+                                    f"Area mismatch for {room.name}: "
+                                    f"traced={room.gross_area_m2:.2f}m² vs "
+                                    f"printed={parea:.2f}m² ({diff_pct:.0f}% diff)"
+                                )
+                                logger.warning(msg)
+                                result.warnings.append(msg)
+                            else:
+                                room.confidence_factors.dimensions_verified = 0.20
+                                room.confidence = room.confidence_factors.total
 
             # --- Stage 7: Room Labeling ---
             logger.info("Stage 7: Room labeling...")
@@ -197,7 +312,9 @@ class CADPipeline:
             poly_gen = HeatingPolygonGenerator()
             rooms = poly_gen.generate(rooms)
             result.warnings.extend(poly_gen.warnings)
-            valid_polys = sum(1 for r in rooms if r.heating_polygon and r.heating_polygon.is_valid)
+            valid_polys = sum(
+                1 for r in rooms if r.heating_polygon and r.heating_polygon.is_valid
+            )
             logger.info("Valid heating polygons: %d/%d", valid_polys, len(rooms))
 
             # --- Stage 11: Strip Generation ---
@@ -207,7 +324,9 @@ class CADPipeline:
             result.warnings.extend(strip_gen.warnings)
             total_strips = sum(r.strip_count for r in rooms)
             total_linear = sum(r.total_linear_m for r in rooms)
-            logger.info("Generated %d strips (%.1f linear metres)", total_strips, total_linear)
+            logger.info(
+                "Generated %d strips (%.1f linear metres)", total_strips, total_linear
+            )
 
             # --- Stage 12: Final Calculations ---
             logger.info("Stage 12: Final calculations...")
@@ -239,25 +358,34 @@ class CADPipeline:
             if self.settings.output.report_json:
                 json_path = output_dir / f"{basename}_report.json"
                 reporter = JSONReport()
-                result.output_files["json"] = reporter.generate(rooms, quality.to_dict(), result.totals, json_path)
+                result.output_files["json"] = reporter.generate(
+                    rooms, quality.to_dict(), result.totals, json_path
+                )
 
             if self.settings.output.report_xlsx:
                 xlsx_path = output_dir / f"{basename}_report.xlsx"
                 xreporter = XLSXReport()
-                result.output_files["xlsx"] = xreporter.generate(rooms, result.totals, xlsx_path)
+                result.output_files["xlsx"] = xreporter.generate(
+                    rooms, result.totals, xlsx_path
+                )
 
             if self.settings.output.report_pdf:
                 pdf_path = output_dir / f"{basename}_report.pdf"
                 preporter = PDFReport()
                 result.output_files["pdf"] = preporter.generate(
-                    rooms, result.totals, quality.to_dict(), pdf_path,
+                    rooms,
+                    result.totals,
+                    quality.to_dict(),
+                    pdf_path,
                     debug_image_paths=result.debug_images,
                 )
 
             result.success = True
             logger.info("=" * 60)
             logger.info("Pipeline completed successfully")
-            logger.info("Output files: %s", {k: str(v) for k, v in result.output_files.items()})
+            logger.info(
+                "Output files: %s", {k: str(v) for k, v in result.output_files.items()}
+            )
             logger.info("=" * 60)
 
         except Exception as exc:
@@ -272,8 +400,17 @@ class CADPipeline:
         import copy
 
         from src.models.entities import (
-            CADLine, CADLWPolyline, CADPolyline, CADArc, CADCircle,
-            CDAEllipse, CADSpline, CADText, CADMText, CADDimension, CADInsert,
+            CADArc,
+            CADCircle,
+            CADDimension,
+            CADInsert,
+            CADLine,
+            CADLWPolyline,
+            CADMText,
+            CADPolyline,
+            CADSpline,
+            CADText,
+            CDAEllipse,
         )
 
         converted = {}
@@ -297,23 +434,45 @@ class CADPipeline:
                     scaled.radius *= factor
                 elif isinstance(ent, CDAEllipse):
                     scaled.center = (ent.center[0] * factor, ent.center[1] * factor)
-                    scaled.major_axis = (ent.major_axis[0] * factor, ent.major_axis[1] * factor)
+                    scaled.major_axis = (
+                        ent.major_axis[0] * factor,
+                        ent.major_axis[1] * factor,
+                    )
                 elif isinstance(ent, CADSpline):
-                    scaled.control_points = [(x * factor, y * factor, z) for x, y, z in ent.control_points]
-                    scaled.fit_points = [(x * factor, y * factor, z) for x, y, z in ent.fit_points]
+                    scaled.control_points = [
+                        (x * factor, y * factor, z) for x, y, z in ent.control_points
+                    ]
+                    scaled.fit_points = [
+                        (x * factor, y * factor, z) for x, y, z in ent.fit_points
+                    ]
                 elif isinstance(ent, CADText):
-                    scaled.position = (ent.position[0] * factor, ent.position[1] * factor)
+                    scaled.position = (
+                        ent.position[0] * factor,
+                        ent.position[1] * factor,
+                    )
                     scaled.height *= factor
                 elif isinstance(ent, CADMText):
-                    scaled.position = (ent.position[0] * factor, ent.position[1] * factor)
+                    scaled.position = (
+                        ent.position[0] * factor,
+                        ent.position[1] * factor,
+                    )
                     scaled.char_height *= factor
                 elif isinstance(ent, CADDimension):
-                    scaled.dim_line_anchor = (ent.dim_line_anchor[0] * factor, ent.dim_line_anchor[1] * factor)
-                    scaled.text_position = (ent.text_position[0] * factor, ent.text_position[1] * factor)
+                    scaled.dim_line_anchor = (
+                        ent.dim_line_anchor[0] * factor,
+                        ent.dim_line_anchor[1] * factor,
+                    )
+                    scaled.text_position = (
+                        ent.text_position[0] * factor,
+                        ent.text_position[1] * factor,
+                    )
                     if scaled.measurement is not None:
                         scaled.measurement *= factor
                 elif isinstance(ent, CADInsert):
-                    scaled.position = (ent.position[0] * factor, ent.position[1] * factor)
+                    scaled.position = (
+                        ent.position[0] * factor,
+                        ent.position[1] * factor,
+                    )
                 elif isinstance(ent, CADHatch):
                     scaled.boundary_paths = [
                         [(x * factor, y * factor) for x, y in path]
@@ -324,7 +483,3 @@ class CADPipeline:
             converted[entity_type] = converted_list
 
         return converted
-
-
-# Avoid circular import at module level
-from src.models.entities import EntityType

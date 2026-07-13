@@ -1,6 +1,6 @@
 pymupdf
 ezdxf<1.1
-streamlit<1.36.0
+streamlit>=1.40,<1.41
 streamlit-drawable-canvas>=0.9.3
 # CAD Engine dependencies
 shapely>=2.0.0
@@ -12,3 +12,6 @@ reportlab>=4.0
 matplotlib>=3.7
 pytest>=8.0
 pytest-cov>=5.0
+# Trace server (hybrid web app for vector trace tool)
+fastapi>=0.100
+uvicorn[standard]>=0.20

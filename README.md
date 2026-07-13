@@ -15,17 +15,28 @@ Input: PDF or DXF
 
 ## Quick Start
 
+### Install
+
 ```bash
 pip install -r requirements.txt
+```
+
+> **Note (Python 3.14 on Windows):** `pillow==10.4.0` has no prebuilt wheel for Python 3.14. The `streamlit-drawable-canvas` component requires Streamlit `image_to_url` (removed in ≥1.41). Requirements.txt pins `streamlit>=1.40,<1.41` which ships pillow≥11 (Python 3.14 compatible) and preserves the needed API. If you hit issues, ensure this pin is present.
+
+### Run
 
 # Auto-pipeline (native CAD DXFs)
+
 python -m src.main sample.dxf -o ./output
 
 # Interactive tracer (for PDFs or PDF-converted DXFs)
+
 python -m src.tracer "Heating System Plans.pdf"
 
 # Web UI
+
 streamlit run streamlit_app.py
+
 ```
 
 ## Documentation
@@ -38,21 +49,23 @@ streamlit run streamlit_app.py
 ## Repository map
 
 ```
-src/
-├── cad/           DXF parser & quality analyzer
-├── geometry/      Snap, cleanup, room reconstruction
-├── heating/       Warmset rules: setbacks, strips, exclusions
-├── models/        Typed dataclasses (entities, rooms, strips)
-├── report/        JSON / XLSX / PDF generators
-├── tracer/        Interactive click-to-trace tool
-├── utils/         Config, logging, debug visualizations
-├── pipeline.py    Orchestrates all 14 stages
-├── main.py        CLI entry point
-└── converter.py   PDF→DXF (existing)
 
-streamlit_app.py   Web UI (converter + takeoff)
-tests/             34 pytest tests
-```
+src/
+├── cad/ DXF parser & quality analyzer
+├── geometry/ Snap, cleanup, room reconstruction
+├── heating/ Warmset rules: setbacks, strips, exclusions
+├── models/ Typed dataclasses (entities, rooms, strips)
+├── report/ JSON / XLSX / PDF generators
+├── tracer/ Interactive click-to-trace tool
+├── utils/ Config, logging, debug visualizations
+├── pipeline.py Orchestrates all 14 stages
+├── main.py CLI entry point
+└── converter.py PDF→DXF (existing)
+
+streamlit_app.py Web UI (converter + takeoff)
+tests/ 34 pytest tests
+
+````
 
 ## Modes
 
@@ -67,4 +80,4 @@ tests/             34 pytest tests
 
 ```bash
 python -m pytest tests/ -v
-```
+````

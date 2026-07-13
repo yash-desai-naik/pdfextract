@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warmset Trace Tool</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; overflow: hidden; height: 100vh; }
+.toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: #16213e; border-bottom: 1px solid #0f3460;
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 48px;
+}
+.toolbar button, .toolbar label {
+  padding: 6px 14px; border: 1px solid #0f3460; border-radius: 6px;
+  background: #1a1a2e; color: #eee; cursor: pointer; font-size: 13px;
+  white-space: nowrap;
+}
+.toolbar button:hover { background: #0f3460; }
+.toolbar button.active { background: #e94560; border-color: #e94560; }
+.toolbar .spacer { flex: 1; }
+.toolbar .info { font-size: 12px; color: #888; }
+#canvas-container {
+  position: fixed; top: 48px; left: 0; right: 0; bottom: 0;
+  overflow: hidden; cursor: grab;
+}
+#canvas-container:active { cursor: grabbing; }
+#svg-layer {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+#svg-layer svg { width: 100%; height: 100%; }
+#fabric-canvas { position: absolute; top: 0; left: 0; }
+#coords-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #16213e; border-top: 1px solid #0f3460;
+  padding: 4px 12px; font-size: 12px; color: #888;
+  display: flex; gap: 20px; z-index: 100; height: 28px;
+}
+#file-input { display: none; }
+.loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #888; }
+.error { color: #e94560; }
+.modal-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6); z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  background: #16213e; border: 1px solid #0f3460; border-radius: 8px;
+  padding: 24px; max-width: 500px; width: 90%;
+}
+.modal h3 { margin-bottom: 12px; }
+.modal input { width: 100%; padding: 8px; margin: 8px 0; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; color: #eee; }
+.modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button onclick="document.getElementById('file-input').click()">📂 Open DXF</button>
+  <input id="file-input" type="file" accept=".dxf">
+  <span class="info" id="file-name"></span>
+  <span class="spacer"></span>
+  <button id="btn-room" class="active" onclick="setMode('room')">⬡ Room</button>
+  <button id="btn-excl" onclick="setMode('exclusion')">⛔ Exclusion</button>
+  <button id="btn-pan" onclick="setMode('pan')">✋ Pan</button>
+  <span class="spacer"></span>
+  <button id="btn-undo" onclick="undo()">↩ Undo</button>
+  <button onclick="finishRoom()">✔ Finish Room</button>
+  <button onclick="exportJSON()">💾 Save JSON</button>
+  <button onclick="fitView()">⊞ Fit</button>
+</div>
+
+<div id="canvas-container">
+  <div id="svg-layer"></div>
+  <canvas id="fabric-canvas"></canvas>
+</div>
+
+<div id="coords-bar">
+  <span id="coords-pos">—</span>
+  <span id="coords-info">No drawing loaded</span>
+</div>
+
+<script>
+// ===== State =====
+let mode = 'room';  // room | exclusion | pan
+let fabricCanvas = null;
+let zoomLevel = 1;
+let panX = 0, panY = 0;
+let drawingData = null;
+let rooms = [];
+let currentRoom = null;  // {name, vertices:[[x,y]], exclusions:[[[x,y]]]}
+let currentExclusion = [];
+let isPanning = false;
+let panStart = {x:0, y:0};
+let selColor = '#00CC00';
+let exclColor = '#e94560';
+let dxfDoc = null;
+
+// ===== Init Fabric =====
+function initFabric() {
+  const container = document.getElementById('canvas-container');
+  const canvas = document.getElementById('fabric-canvas');
+  canvas.width = container.clientWidth;
+  canvas.height = container.clientHeight;
+
+  fabricCanvas = new fabric.Canvas('fabric-canvas', {
+    selection: false,
+    preserveObjectStacking: true,
+    backgroundColor: 'transparent',
+  });
+
+  // Mouse wheel zoom
+  fabricCanvas.on('mouse:wheel', opt => {
+    if (drawingData) {
+      const delta = opt.e.deltaY;
+      zoomLevel *= 0.999 ** delta;
+      zoomLevel = Math.max(0.1, Math.min(50, zoomLevel));
+      applyTransform();
+      opt.e.preventDefault();
+      opt.e.stopPropagation();
+    }
+  });
+
+  // Mouse events
+  fabricCanvas.on('mouse:down', opt => {
+    if (mode === 'pan') {
+      isPanning = true;
+      panStart = {x: opt.e.clientX, y: opt.e.clientY};
+      return;
+    }
+    if (!drawingData) return;
+    if (opt.e.button !== 0) return;  // left click only
+
+    const pointer = fabricCanvas.getPointer(opt.e);
+
+    // Only allow drawing inside the SVG viewport
+    const svg = document.querySelector('#svg-layer svg');
+    if (!svg) return;
+
+    if (mode === 'room') {
+      if (!currentRoom) {
+        currentRoom = {name: 'Room', vertices: [], exclusions: []};
+      }
+      currentRoom.vertices.push([pointer.x, pointer.y]);
+      drawCurrentPolygon();
+    } else if (mode === 'exclusion') {
+      if (!currentRoom) {
+        currentRoom = {name: 'Room', vertices: [], exclusions: []};
+      }
+      currentExclusion.push([pointer.x, pointer.y]);
+      drawCurrentExclusion();
+    }
+  });
+
+  fabricCanvas.on('mouse:move', opt => {
+    if (mode === 'pan' && isPanning) {
+      const dx = opt.e.clientX - panStart.x;
+      const dy = opt.e.clientY - panStart.y;
+      panX += dx / zoomLevel;
+      panY += dy / zoomLevel;
+      panStart = {x: opt.e.clientX, y: opt.e.clientY};
+      applyTransform();
+      return;
+    }
+    // Update coords
+    const pointer = fabricCanvas.getPointer(opt.e);
+    document.getElementById('coords-pos').textContent =
+      `x: ${pointer.x.toFixed(1)}, y: ${pointer.y.toFixed(1)}`;
+  });
+
+  fabricCanvas.on('mouse:up', () => { isPanning = false; });
+
+  // Right-click closes room
+  fabricCanvas.on('mouse:down', opt => {
+    if (opt.e.button === 2) {  // right click
+      if (mode === 'room' && currentRoom && currentRoom.vertices.length >= 3) {
+        finishRoom();
+      }
+    }
+  });
+
+  fabricCanvas.onContextMenu = () => false;
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.key === 'z' && (e.ctrlKey || e.metaKey)) { undo(); e.preventDefault(); }
+    if (e.key === 'Enter') { finishRoom(); }
+    if (e.key === 'r' || e.key === 'R') { setMode('room'); }
+    if (e.key === 'e' || e.key === 'E') { setMode('exclusion'); }
+    if (e.key === 'p' || e.key === 'P') { setMode('pan'); }
+    if (e.key === 's' && (e.ctrlKey || e.metaKey)) { exportJSON(); e.preventDefault(); }
+    if (e.key === 'f' || e.key === 'F') { fitView(); }
+  });
+
+  window.addEventListener('resize', () => {
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+    fabricCanvas.setWidth(canvas.width);
+    fabricCanvas.setHeight(canvas.height);
+    applyTransform();
+  });
+}
+
+// ===== Transform =====
+function applyTransform() {
+  if (!fabricCanvas) return;
+  const container = document.getElementById('canvas-container');
+  const cx = container.clientWidth / 2;
+  const cy = container.clientHeight / 2;
+  const t = new fabric.Point(cx, cy);
+  fabricCanvas.setZoom(zoomLevel);
+  fabricCanvas.absolutePan(new fabric.Point(
+    -panX * zoomLevel + cx,
+    -panY * zoomLevel + cy
+  ));
+  fabricCanvas.requestRenderAll();
+  updateSVGTransform();
+}
+
+function updateSVGTransform() {
+  const svg = document.querySelector('#svg-layer svg');
+  if (!svg) return;
+  const container = document.getElementById('canvas-container');
+  const cx = container.clientWidth / 2;
+  const cy = container.clientHeight / 2;
+  svg.style.transformOrigin = `${cx}px ${cy}px`;
+  svg.style.transform = `translate(${-panX * zoomLevel + cx}px, ${-panY * zoomLevel + cy}px) scale(${zoomLevel})`;
+}
+
+// ===== Mode switching =====
+function setMode(newMode) {
+  mode = newMode;
+  document.querySelectorAll('.toolbar button[id^="btn-"]').forEach(b => b.classList.remove('active'));
+  if (newMode === 'room') document.getElementById('btn-room').classList.add('active');
+  else if (newMode === 'exclusion') document.getElementById('btn-excl').classList.add('active');
+  else if (newMode === 'pan') document.getElementById('btn-pan').classList.add('active');
+  document.getElementById('canvas-container').style.cursor = newMode === 'pan' ? 'grab' : 'crosshair';
+  if (fabricCanvas) {
+    fabricCanvas.isDrawingMode = false;
+    fabricCanvas.selection = false;
+    fabricCanvas.defaultCursor = newMode === 'pan' ? 'grab' : 'crosshair';
+    fabricCanvas.requestRenderAll();
+  }
+}
+
+// ===== Drawing helpers =====
+function drawCurrentPolygon() {
+  if (!fabricCanvas || !currentRoom || currentRoom.vertices.length < 2) return;
+  // Remove old temp polygon
+  const existing = fabricCanvas.getObjects().filter(o => o._temp);
+  existing.forEach(o => fabricCanvas.remove(o));
+
+  const pts = currentRoom.vertices.map(p => ({x: p[0], y: p[1]}));
+  if (pts.length >= 3) {
+    const poly = new fabric.Polygon(pts, {
+      fill: 'rgba(0,204,0,0.12)', stroke: selColor,
+      strokeWidth: 2 / zoomLevel, selectable: false, evented: false, _temp: true,
+    });
+    fabricCanvas.add(poly);
+  }
+  // Draw vertices
+  pts.forEach((p, i) => {
+    const circle = new fabric.Circle({
+      left: p.x - 3/zoomLevel, top: p.y - 3/zoomLevel,
+      radius: 3/zoomLevel, fill: selColor, selectable: false, evented: false, _temp: true,
+    });
+    fabricCanvas.add(circle);
+  });
+  fabricCanvas.requestRenderAll();
+}
+
+function drawCurrentExclusion() {
+  if (!fabricCanvas || currentExclusion.length < 2) return;
+  const existing = fabricCanvas.getObjects().filter(o => o._temp_excl);
+  existing.forEach(o => fabricCanvas.remove(o));
+
+  const pts = currentExclusion.map(p => ({x: p[0], y: p[1]}));
+  if (pts.length >= 3) {
+    const poly = new fabric.Polygon(pts, {
+      fill: 'rgba(233,69,96,0.2)', stroke: exclColor,
+      strokeWidth: 2 / zoomLevel, selectable: false, evented: false, _temp_excl: true,
+    });
+    fabricCanvas.add(poly);
+  }
+  pts.forEach((p) => {
+    const circle = new fabric.Circle({
+      left: p.x - 3/zoomLevel, top: p.y - 3/zoomLevel,
+      radius: 3/zoomLevel, fill: exclColor, selectable: false, evented: false, _temp_excl: true,
+    });
+    fabricCanvas.add(circle);
+  });
+  fabricCanvas.requestRenderAll();
+}
+
+function finishRoom() {
+  if (!currentRoom || currentRoom.vertices.length < 3) return;
+  // Close exclusion if drawing one
+  if (mode === 'exclusion' && currentExclusion.length >= 3) {
+    currentRoom.exclusions.push([...currentExclusion]);
+    currentExclusion = [];
+    drawCurrentExclusion();
+    return;
+  }
+
+  // Prompt for name
+  const name = prompt('Room name:', currentRoom.name) || currentRoom.name;
+  currentRoom.name = name;
+
+  // Draw the completed room on the permanent layer
+  const pts = currentRoom.vertices.map(p => ({x: p[0], y: p[1]}));
+  const poly = new fabric.Polygon(pts, {
+    fill: 'rgba(0,204,0,0.08)', stroke: selColor,
+    strokeWidth: 2, selectable: false, evented: false,
+  });
+  fabricCanvas.add(poly);
+
+  // Draw label
+  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+  const txt = new fabric.Text(name, {
+    left: cx, top: cy, fontSize: 14, fill: '#eee',
+    originX: 'center', originY: 'center', selectable: false, evented: false,
+  });
+  fabricCanvas.add(txt);
+
+  // Draw exclusion polygons
+  currentRoom.exclusions.forEach(excPts => {
+    if (excPts.length >= 3) {
+      const ep = excPts.map(p => ({x: p[0], y: p[1]}));
+      const epoly = new fabric.Polygon(ep, {
+        fill: 'rgba(233,69,96,0.2)', stroke: exclColor,
+        strokeWidth: 2, selectable: false, evented: false,
+      });
+      fabricCanvas.add(epoly);
+    }
+  });
+
+  rooms.push({...currentRoom});
+  currentRoom = null;
+  currentExclusion = [];
+
+  // Clean temp objects
+  fabricCanvas.getObjects().filter(o => o._temp || o._temp_excl).forEach(o => fabricCanvas.remove(o));
+  updateInfo();
+  fabricCanvas.requestRenderAll();
+}
+
+function undo() {
+  if (mode === 'exclusion' && currentExclusion.length > 0) {
+    currentExclusion.pop();
+    drawCurrentExclusion();
+    return;
+  }
+  if (currentRoom && currentRoom.vertices.length > 0) {
+    currentRoom.vertices.pop();
+    drawCurrentPolygon();
+    return;
+  }
+  if (rooms.length > 0) {
+    const last = rooms.pop();
+    fabricCanvas.getObjects().forEach(o => {
+      if (o.type === 'polygon' || o.type === 'text' || o.type === 'circle') {
+        // Simple: remove last room's objects (approximate)
+      }
+    });
+    redrawAll();
+  }
+  updateInfo();
+}
+
+function redrawAll() {
+  if (!fabricCanvas) return;
+  fabricCanvas.clear();
+  rooms.forEach(room => {
+    if (room.vertices.length >= 3) {
+      const pts = room.vertices.map(p => ({x: p[0], y: p[1]}));
+      fabricCanvas.add(new fabric.Polygon(pts, {
+        fill: 'rgba(0,204,0,0.08)', stroke: selColor,
+        strokeWidth: 2, selectable: false, evented: false,
+      }));
+      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+      fabricCanvas.add(new fabric.Text(room.name, {
+        left: cx, top: cy, fontSize: 14, fill: '#eee',
+        originX: 'center', originY: 'center', selectable: false, evented: false,
+      }));
+    }
+    room.exclusions.forEach(excPts => {
+      if (excPts.length >= 3) {
+        const ep = excPts.map(p => ({x: p[0], y: p[1]}));
+        fabricCanvas.add(new fabric.Polygon(ep, {
+          fill: 'rgba(233,69,96,0.2)', stroke: exclColor,
+          strokeWidth: 2, selectable: false, evented: false,
+        }));
+      }
+    });
+  });
+  fabricCanvas.requestRenderAll();
+}
+
+function updateInfo() {
+  document.getElementById('coords-info').textContent =
+    `${rooms.length} rooms traced`;
+}
+
+// ===== DXF Loading =====
+async function loadDXFFile(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  document.getElementById('file-name').textContent = `Loading ${file.name}...`;
+
+  // Upload to server
+  const uploadResp = await fetch('/api/upload', { method: 'POST', body: formData });
+  if (!uploadResp.ok) { alert('Upload failed'); return; }
+  const uploaded = await uploadResp.json();
+
+  // Load into trace server
+  const resp = await fetch(`/api/load?path=${encodeURIComponent(uploaded.path)}`, { method: 'POST' });
+  if (!resp.ok) { alert('Load failed'); return; }
+  const data = await resp.json();
+
+  drawingData = data;
+  document.getElementById('file-name').textContent =
+    `${file.name} (${data.entity_count} ents, ${data.unit_label})`;
+
+  // Render SVG
+  renderSVG(data.entities, data.bounds);
+  setMode('room');
+  updateInfo();
+}
+
+async function loadDXFPath(path) {
+  const resp = await fetch(`/api/load?path=${encodeURIComponent(path)}`, { method: 'POST' });
+  if (!resp.ok) { alert(`Load failed: ${await resp.text()}`); return; }
+  const data = await resp.json();
+  drawingData = data;
+  document.getElementById('file-name').textContent =
+    `${path.split('/').pop()} (${data.entity_count} ents, ${data.unit_label})`;
+  renderSVG(data.entities, data.bounds);
+  setMode('room');
+  updateInfo();
+}
+
+function renderSVG(entities, bounds) {
+  const svgLayer = document.getElementById('svg-layer');
+  const [xmin, xmax, ymin, ymax] = bounds;
+  const w = xmax - xmin || 1;
+  const h = ymax - ymin || 1;
+  const padding = w * 0.05;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `${xmin - padding} ${ymin - padding} ${w + 2*padding} ${h + 2*padding}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.style.width = '100%';
+  svg.style.height = '100%';
+
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('stroke', '#555');
+  g.setAttribute('fill', 'none');
+  g.setAttribute('stroke-width', '0.01');
+
+  entities.forEach(ent => {
+    if (ent.type === 'LINE' && ent.points.length >= 2) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', ent.points[0][0]);
+      line.setAttribute('y1', ent.points[0][1]);
+      line.setAttribute('x2', ent.points[1][0]);
+      line.setAttribute('y2', ent.points[1][1]);
+      g.appendChild(line);
+    } else if (ent.type === 'LWPOLYLINE' && ent.points.length >= 2) {
+      const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const pts = ent.points.map(p => `${p[0]},${p[1]}`).join(' ');
+      poly.setAttribute('points', pts);
+      g.appendChild(poly);
+    } else if (ent.type === 'CIRCLE') {
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', ent.center[0]);
+      circle.setAttribute('cy', ent.center[1]);
+      circle.setAttribute('r', ent.radius);
+      g.appendChild(circle);
+    } else if (ent.type === 'MTEXT') {
+      const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      txt.setAttribute('x', ent.position[0]);
+      txt.setAttribute('y', ent.position[1]);
+      txt.setAttribute('fill', '#888');
+      txt.setAttribute('stroke', 'none');
+      txt.setAttribute('font-size', Math.max(ent.height || 3, 0.5));
+      txt.textContent = ent.text.substring(0, 30);
+      g.appendChild(txt);
+    }
+  });
+
+  svg.appendChild(g);
+  svgLayer.innerHTML = '';
+  svgLayer.appendChild(svg);
+}
+
+// ===== File upload handler =====
+document.getElementById('file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  // Upload via fetch
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('name', file.name);
+
+  try {
+    const uploadResp = await fetch('/api/upload', { method: 'POST', body: formData });
+    if (!uploadResp.ok) throw new Error(await uploadResp.text());
+    const result = await uploadResp.json();
+    await loadDXFPath(result.path);
+  } catch (err) {
+    alert(`Upload failed: ${err.message}`);
+  }
+});
+
+// ===== Fit view =====
+function fitView() {
+  if (!drawingData) return;
+  zoomLevel = 1;
+  panX = 0;
+  panY = 0;
+  applyTransform();
+}
+
+// ===== Export =====
+async function exportJSON() {
+  if (rooms.length === 0 && (!currentRoom || currentRoom.vertices.length < 3)) {
+    alert('No rooms to save');
+    return;
+  }
+
+  // Finish current room if being drawn
+  if (currentRoom && currentRoom.vertices.length >= 3) {
+    finishRoom();
+  }
+
+  const exportRooms = rooms.map(r => ({
+    name: r.name,
+    vertices: r.vertices,
+    exclusions: r.exclusions,
+  }));
+
+  const blob = new Blob([JSON.stringify({rooms: exportRooms}, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'traced_rooms.json';
+  a.click();
+  URL.revokeObjectURL(url);
+
+  // Also send to server
+  if (drawingData) {
+    try {
+      const resp = await fetch('/api/save_trace', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          drawing_id: drawingData.drawing_id,
+          rooms: exportRooms,
+        }),
+      });
+      const result = await resp.json();
+      document.getElementById('coords-info').textContent =
+        `${rooms.length} rooms saved`;
+    } catch (err) {
+      console.error('Server save failed:', err);
+    }
+  }
+}
+
+// ===== Init =====
+window.addEventListener('DOMContentLoaded', () => {
+  initFabric();
+  // Check for URL param ?dxf=path
+  const params = new URLSearchParams(window.location.search);
+  const dxfPath = params.get('dxf');
+  if (dxfPath) {
+    loadDXFPath(dxfPath);
+  }
+});
+</script>
+</body>
+</html>
