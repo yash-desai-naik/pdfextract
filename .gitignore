@@ -16,3 +16,4 @@ __pycache__/
 .idea/
 sample2.pdf.DS_Store
 tracer_output/
+.DS_Store
