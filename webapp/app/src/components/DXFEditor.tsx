@@ -267,7 +267,10 @@ export default function DXFEditor({
     if (!c || !dxfPath) return;
     const mode = simpleMode ? "simple" : "full";
     console.log("[Editor] Loading DXF SVG (%s mode)...", mode);
-    const svgUrl = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}&mode=${mode}`;
+    // Clear old background first + bust cache
+    c.backgroundImage = undefined;
+    const t = Date.now();
+    const svgUrl = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}&mode=${mode}&_=${t}`;
     c.setBackgroundImage(
       svgUrl,
       () => {
