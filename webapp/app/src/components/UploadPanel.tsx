@@ -1,9 +1,13 @@
 import { useState, useRef, useCallback } from "react";
 import { Upload, FileText, AlertCircle } from "lucide-react";
-import type { DXFData } from "../types";
 
 interface Props {
-  onComplete: (path: string, data: DXFData, scale: Record<string, any>) => void;
+  onComplete: (
+    path: string,
+    bounds: number[],
+    unit: string,
+    scale: Record<string, any>,
+  ) => void;
   onError: (msg: string) => void;
 }
 
@@ -49,16 +53,25 @@ export default function UploadPanel({ onComplete, onError }: Props) {
           convResult.scale,
         );
 
-        // Step 2: Load DXF entities
-        console.log("[Upload] GET /api/dxf/entities");
-        const dxfResp = await fetch(
-          `/api/dxf/entities?path=${encodeURIComponent(convResult.dxf_path)}`,
+        // Step 2: Load DXF bounds (lightweight — no entity soup)
+        console.log("[Upload] GET /api/dxf/bounds");
+        const boundsResp = await fetch(
+          `/api/dxf/bounds?path=${encodeURIComponent(convResult.dxf_path)}`,
         );
-        if (!dxfResp.ok) throw new Error("Failed to load DXF");
-        const dxfData: DXFData = await dxfResp.json();
-        console.log("[Upload] DXF loaded:", dxfData.entity_count, "features");
+        if (!boundsResp.ok) throw new Error("Failed to load DXF bounds");
+        const boundsData = await boundsResp.json();
+        console.log(
+          "[Upload] Bounds loaded:",
+          boundsData.bounds,
+          boundsData.unit,
+        );
 
-        onComplete(convResult.dxf_path, dxfData, convResult.scale || {});
+        onComplete(
+          convResult.dxf_path,
+          boundsData.bounds,
+          boundsData.unit,
+          convResult.scale || {},
+        );
       } catch (e: any) {
         console.error("[Upload] Error:", e);
         if (e.name === "AbortError") {

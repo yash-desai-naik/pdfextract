@@ -1,27 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { fabric } from "fabric";
-import type { DXFData, RoomData, EditorMode } from "../types";
+import type { RoomData, EditorMode } from "../types";
 import RoomPanel from "./RoomPanel";
 import Toolbar from "./Toolbar";
-import {
-  MousePointer2,
-  Hexagon,
-  Ban,
-  Hand,
-  Undo2,
-  Check,
-  Ruler,
-} from "lucide-react";
 
 interface Props {
-  dxfData: DXFData;
+  dxfPath: string;
+  bounds: number[];
+  unitLabel: string;
   rooms: RoomData[];
   onRoomsChange: (rooms: RoomData[]) => void;
   onCalculate: () => void;
   calculating: boolean;
 }
 
-// === Drawing helpers ===
 const ROOM_COLOR = "#10b981";
 const EXCL_COLOR = "#ef4444";
 const ROOM_FILL = "rgba(16, 185, 129, 0.08)";
@@ -33,7 +25,9 @@ function nextId() {
 }
 
 export default function DXFEditor({
-  dxfData,
+  dxfPath,
+  bounds,
+  unitLabel,
   rooms,
   onRoomsChange,
   onCalculate,
@@ -48,8 +42,6 @@ export default function DXFEditor({
     exclusions: number[][][];
   } | null>(null);
   const [currentExcl, setCurrentExcl] = useState<number[][]>([]);
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [panPos, setPanPos] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0 });
 
@@ -67,40 +59,24 @@ export default function DXFEditor({
     });
     fabricRef.current = c;
 
-    // Mouse wheel zoom
     c.on("mouse:wheel", (opt) => {
       const delta = opt.e.deltaY;
       let zoom = c.getZoom();
       zoom *= 0.998 ** delta;
       zoom = Math.min(Math.max(zoom, 0.05), 100);
       c.zoomToPoint(new fabric.Point(opt.e.offsetX, opt.e.offsetY), zoom);
-      setZoomLevel(zoom);
       opt.e.preventDefault();
       opt.e.stopPropagation();
     });
 
-    // Pan
     c.on("mouse:down", (opt) => {
+      if (opt.e.button === 2) return; // right click handled below
       if (mode === "pan") {
         setIsPanning(true);
         panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
+        return;
       }
-    });
-    c.on("mouse:move", (opt) => {
-      if (isPanning && mode === "pan") {
-        const vpt = c.viewportTransform!;
-        vpt[4] += opt.e.clientX - panStart.current.x;
-        vpt[5] += opt.e.clientY - panStart.current.y;
-        c.requestRenderAll();
-        panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
-      }
-    });
-    c.on("mouse:up", () => setIsPanning(false));
-
-    // Drawing: left click adds vertex
-    c.on("mouse:down", (opt) => {
-      if (opt.e.button !== 0) return;
-      if (mode === "pan" || mode === "select") return;
+      if (mode === "select") return;
 
       const pointer = c.getPointer(opt.e);
       const pt: [number, number] = [pointer.x, pointer.y];
@@ -115,6 +91,18 @@ export default function DXFEditor({
       }
     });
 
+    c.on("mouse:move", (opt) => {
+      if (isPanning && mode === "pan") {
+        const vpt = c.viewportTransform!;
+        vpt[4] += opt.e.clientX - panStart.current.x;
+        vpt[5] += opt.e.clientY - panStart.current.y;
+        c.requestRenderAll();
+        panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
+      }
+    });
+
+    c.on("mouse:up", () => setIsPanning(false));
+
     // Right click closes shape
     c.on("mouse:down", (opt) => {
       if (opt.e.button !== 2) return;
@@ -126,11 +114,10 @@ export default function DXFEditor({
     });
     c.onContextMenu = () => false;
 
-    // Resize
     const resize = () => {
       c.setWidth(container.clientWidth);
       c.setHeight(container.clientHeight);
-      c.requestRenderAll();
+      c.renderAll();
     };
     window.addEventListener("resize", resize);
     return () => {
@@ -140,79 +127,34 @@ export default function DXFEditor({
     };
   }, []);
 
-  // ===== Render DXF entities as SVG on canvas =====
+  // ===== Load DXF as server-rendered SVG background =====
   useEffect(() => {
     const c = fabricRef.current;
-    if (!c || !dxfData) return;
+    if (!c || !dxfPath) return;
+    console.log("[Editor] Loading DXF background SVG...");
+    const svgUrl = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}`;
+    c.setBackgroundImage(
+      svgUrl,
+      () => {
+        c.renderAll();
+        console.log("[Editor] Background loaded");
+      },
+      {
+        scaleX: 1,
+        scaleY: 1,
+        originX: "left",
+        originY: "top",
+        left: 0,
+        top: 0,
+      },
+    );
+  }, [dxfPath]);
 
-    // Clear all non-room objects
-    const toRemove = c
-      .getObjects()
-      .filter(
-        (o: any) =>
-          o._type !== "room" && o._type !== "excl" && o._type !== "label",
-      );
-    toRemove.forEach((o) => c.remove(o));
-
-    const [xmin, ymin, xmax, ymax] = dxfData.bounds;
-    const w = xmax - xmin || 1;
-    const h = ymax - ymin || 1;
-    const pad = w * 0.05;
-
-    // Draw each entity
-    for (const feat of dxfData.features) {
-      try {
-        if (
-          feat.properties.type === "LINE" ||
-          feat.properties.type === "LWPOLYLINE"
-        ) {
-          const coords = feat.geometry.coordinates as number[][];
-          if (coords.length < 2) continue;
-          const pts = coords.map((p) => ({ x: p[0], y: p[1] }));
-          // Normalize to canvas coords
-          const scaleX = 1 / (w + 2 * pad);
-          const scaleY = 1 / (h + 2 * pad);
-          const norm = pts.map((p) => ({
-            x: (p.x - xmin + pad) * scaleX * c.width!,
-            y: (p.y - ymin + pad) * scaleY * c.height!,
-          }));
-          const line = new fabric.Polyline(norm, {
-            stroke: "#475569",
-            strokeWidth: 1,
-            fill: "transparent",
-            selectable: false,
-            evented: false,
-            _type: "bg",
-          });
-          c.add(line);
-        } else if (feat.properties.type === "MTEXT") {
-          const coord = feat.geometry.coordinates as number[];
-          const scaleX = c.width! / (w + 2 * pad);
-          const scaleY = c.height! / (h + 2 * pad);
-          const x = (coord[0] - xmin + pad) * scaleX;
-          const y = (coord[1] - ymin + pad) * scaleY;
-          const txt = new fabric.Text(feat.properties.text || "", {
-            left: x,
-            top: y,
-            fontSize: Math.max(feat.properties.height || 3, 6),
-            fill: "#64748b",
-            selectable: false,
-            evented: false,
-            _type: "bg",
-          });
-          c.add(txt);
-        }
-      } catch {}
-    }
-    c.renderAll();
-  }, [dxfData]);
-
-  // ===== Re-render rooms when rooms change =====
+  // ===== Re-render rooms when they change =====
   useEffect(() => {
     const c = fabricRef.current;
     if (!c) return;
 
-    // Remove old rooms
     const toRemove = c
       .getObjects()
       .filter(
@@ -221,7 +163,6 @@ export default function DXFEditor({
       );
     toRemove.forEach((o) => c.remove(o));
 
-    // Draw each room
     for (const room of rooms) {
       if (room.vertices.length >= 3) {
         const pts = room.vertices.map((p) => ({ x: p[0], y: p[1] }));
@@ -234,13 +175,10 @@ export default function DXFEditor({
           _type: "room",
         });
         c.add(poly);
-
-        // Label
         const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
         const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-        const label = new fabric.Text(
-          `${room.name}\n${room.area?.toFixed(1) || ""}m²`,
-          {
+        c.add(
+          new fabric.Text(`${room.name}\n${room.area?.toFixed(1) || ""}m²`, {
             left: cx,
             top: cy,
             fontSize: 13,
@@ -250,24 +188,22 @@ export default function DXFEditor({
             selectable: false,
             evented: false,
             _type: "label",
-          },
+          }),
         );
-        c.add(label);
       }
-
-      // Exclusion polygons
       for (const exc of room.exclusions) {
         if (exc.length >= 3) {
           const pts = exc.map((p) => ({ x: p[0], y: p[1] }));
-          const poly = new fabric.Polygon(pts, {
-            fill: EXCL_FILL,
-            stroke: EXCL_COLOR,
-            strokeWidth: 2,
-            selectable: false,
-            evented: false,
-            _type: "excl",
-          });
-          c.add(poly);
+          c.add(
+            new fabric.Polygon(pts, {
+              fill: EXCL_FILL,
+              stroke: EXCL_COLOR,
+              strokeWidth: 2,
+              selectable: false,
+              evented: false,
+              _type: "excl",
+            }),
+          );
         }
       }
     }
@@ -278,73 +214,72 @@ export default function DXFEditor({
   useEffect(() => {
     const c = fabricRef.current;
     if (!c) return;
-
-    // Remove temp objects
     const toRemove = c.getObjects().filter((o: any) => o._temp);
     toRemove.forEach((o) => c.remove(o));
 
     if (currentRoom && currentRoom.vertices.length >= 2) {
       const pts = currentRoom.vertices.map((p) => ({ x: p[0], y: p[1] }));
       if (pts.length >= 3) {
-        const poly = new fabric.Polygon(pts, {
-          fill: "rgba(16, 185, 129, 0.12)",
-          stroke: ROOM_COLOR,
-          strokeWidth: 2,
-          selectable: false,
-          evented: false,
-          _temp: true,
-        });
-        c.add(poly);
+        c.add(
+          new fabric.Polygon(pts, {
+            fill: "rgba(16, 185, 129, 0.12)",
+            stroke: ROOM_COLOR,
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+            _temp: true,
+          }),
+        );
       }
-      // Vertex dots
       pts.forEach((p) => {
-        const dot = new fabric.Circle({
-          left: p.x - 3,
-          top: p.y - 3,
-          radius: 3,
-          fill: ROOM_COLOR,
-          selectable: false,
-          evented: false,
-          _temp: true,
-        });
-        c.add(dot);
+        c.add(
+          new fabric.Circle({
+            left: p.x - 3,
+            top: p.y - 3,
+            radius: 3,
+            fill: ROOM_COLOR,
+            selectable: false,
+            evented: false,
+            _temp: true,
+          }),
+        );
       });
     }
 
     if (currentExcl.length >= 2) {
       const pts = currentExcl.map((p) => ({ x: p[0], y: p[1] }));
       if (pts.length >= 3) {
-        const poly = new fabric.Polygon(pts, {
-          fill: "rgba(239, 68, 68, 0.15)",
-          stroke: EXCL_COLOR,
-          strokeWidth: 2,
-          selectable: false,
-          evented: false,
-          _temp: true,
-        });
-        c.add(poly);
+        c.add(
+          new fabric.Polygon(pts, {
+            fill: "rgba(239, 68, 68, 0.15)",
+            stroke: EXCL_COLOR,
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+            _temp: true,
+          }),
+        );
       }
       pts.forEach((p) => {
-        const dot = new fabric.Circle({
-          left: p.x - 3,
-          top: p.y - 3,
-          radius: 3,
-          fill: EXCL_COLOR,
-          selectable: false,
-          evented: false,
-          _temp: true,
-        });
-        c.add(dot);
+        c.add(
+          new fabric.Circle({
+            left: p.x - 3,
+            top: p.y - 3,
+            radius: 3,
+            fill: EXCL_COLOR,
+            selectable: false,
+            evented: false,
+            _temp: true,
+          }),
+        );
       });
     }
-
     c.renderAll();
   }, [currentRoom, currentExcl]);
 
   // ===== Actions =====
   const finishRoom = useCallback(() => {
     if (!currentRoom || currentRoom.vertices.length < 3) return;
-
     const name = `Room ${rooms.length + 1}`;
     const newRoom: RoomData = {
       id: nextId(),
@@ -352,7 +287,6 @@ export default function DXFEditor({
       vertices: currentRoom.vertices,
       exclusions: currentRoom.exclusions,
     };
-
     onRoomsChange([...rooms, newRoom]);
     setCurrentRoom(null);
     setCurrentExcl([]);
@@ -378,15 +312,11 @@ export default function DXFEditor({
       );
       return;
     }
-    if (rooms.length > 0) {
-      onRoomsChange(rooms.slice(0, -1));
-    }
+    if (rooms.length > 0) onRoomsChange(rooms.slice(0, -1));
   }, [mode, currentExcl, currentRoom, rooms, onRoomsChange]);
 
-  const handleDeleteSelected = useCallback(() => {
-    if (rooms.length > 0) {
-      onRoomsChange(rooms.slice(0, -1));
-    }
+  const handleDelete = useCallback(() => {
+    if (rooms.length > 0) onRoomsChange(rooms.slice(0, -1));
   }, [rooms, onRoomsChange]);
 
   const handleFitView = useCallback(() => {
@@ -395,30 +325,25 @@ export default function DXFEditor({
     c.setZoom(1);
     c.viewportTransform = [1, 0, 0, 1, 0, 0];
     c.requestRenderAll();
-    setZoomLevel(1);
   }, []);
 
   const totalArea = rooms.reduce((s, r) => s + (r.area || 0), 0);
 
   return (
     <div className="h-full flex flex-col">
-      {/* Toolbar */}
       <Toolbar
         mode={mode}
         onModeChange={(m) => setMode(m)}
         onUndo={handleUndo}
         onFitView={handleFitView}
-        onDelete={handleDeleteSelected}
+        onDelete={handleDelete}
         onFinishRoom={finishRoom}
         onCalculate={onCalculate}
         calculating={calculating}
         roomCount={rooms.length}
         totalArea={totalArea}
       />
-
-      {/* Canvas + Sidebar */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Canvas container */}
         <div
           ref={containerRef}
           className="flex-1 relative overflow-hidden"
@@ -433,8 +358,6 @@ export default function DXFEditor({
         >
           <canvas ref={canvasRef} />
         </div>
-
-        {/* Room sidebar */}
         <RoomPanel
           rooms={rooms}
           onRoomsChange={onRoomsChange}
