@@ -21,7 +21,8 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Warmset Trace Tool")
 
-templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates_dir = str(Path(__file__).parent / "templates")
+templates = Jinja2Templates(directory=templates_dir)
 
 
 # ── In-memory store for loaded drawings ──────────────────────
