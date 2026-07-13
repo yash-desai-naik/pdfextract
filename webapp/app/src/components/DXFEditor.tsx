@@ -43,7 +43,6 @@ export default function DXFEditor({
   } | null>(null);
   const [currentExcl, setCurrentExcl] = useState<number[][]>([]);
   const [isPanning, setIsPanning] = useState(false);
-  const [simpleMode, setSimpleMode] = useState(false);
   const panStart = useRef({ x: 0, y: 0 });
   const SVG_RENDER_W = 2000;
   const SVG_RENDER_H = 1500;
@@ -265,9 +264,8 @@ export default function DXFEditor({
   useEffect(() => {
     const c = fabricRef.current;
     if (!c || !dxfPath) return;
-    const mode = simpleMode ? "simple" : "full";
-    console.log("[Editor] Loading DXF SVG (%s mode)...", mode);
-    const svgUrl = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}&mode=${mode}`;
+    console.log("[Editor] Loading DXF background SVG...");
+    const svgUrl = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}`;
     c.setBackgroundImage(
       svgUrl,
       () => {
@@ -283,7 +281,7 @@ export default function DXFEditor({
         top: 0,
       },
     );
-  }, [dxfPath, simpleMode]);
+  }, [dxfPath]);
 
   // ===== Re-render rooms when they change =====
   useEffect(() => {
@@ -455,23 +453,12 @@ export default function DXFEditor({
           roomCount={rooms.length}
           totalArea={totalArea}
         />
-        <button
-          onClick={() => setSimpleMode((p) => !p)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all shrink-0 mr-1 ${
-            simpleMode
-              ? "bg-brand/20 text-brand"
-              : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
-          }`}
-          title="Toggle simplified floor plan"
-        >
-          {simpleMode ? "\u25C9 Simple" : "\u25CB Full"}
-        </button>
         <a
           href={`/api/dxf/download?path=${encodeURIComponent(dxfPath)}`}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-all shrink-0 mr-2"
           title="Download DXF file"
         >
-          \u2B07 DXF
+          ⬇ DXF
         </a>
       </div>
       <div className="flex-1 flex overflow-hidden">
