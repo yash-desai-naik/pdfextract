@@ -37,14 +37,15 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
             if t == "LINE":
                 xs += [e.dxf.start.x, e.dxf.end.x]
                 ys += [e.dxf.start.y, e.dxf.end.y]
+                # Negate Y: DXF is Y-up, SVG viewBox is Y-down
                 lines.append(
-                    f"M{e.dxf.start.x},{e.dxf.start.y}L{e.dxf.end.x},{e.dxf.end.y}"
+                    f"M{e.dxf.start.x},{-e.dxf.start.y}L{e.dxf.end.x},{-e.dxf.end.y}"
                 )
             elif t == "LWPOLYLINE":
                 pts = e.get_points("xy")
                 xs += [p[0] for p in pts]
                 ys += [p[1] for p in pts]
-                d = "M" + "L".join(f"{p[0]},{p[1]}" for p in pts)
+                d = "M" + "L".join(f"{p[0]},{-p[1]}" for p in pts)
                 if e.closed:
                     d += "Z"
                 lines.append(d)
@@ -65,27 +66,22 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
     if not xs:
         raise HTTPException(400, "No geometry found in DXF")
 
+    # Negate Y bounds: DXF Y-up maps to SVG Y-down
     margin = (max(xs) - min(xs)) * 0.05 or 10
-    xmin, ymin = min(xs) - margin, min(ys) - margin
-    xmax, ymax = max(xs) + margin, max(ys) + margin
-    vw, vh = xmax - xmin, ymax - ymin
-
-    # Transform all line coordinates to the SVG viewport
-    transformed_lines = []
-    for d in lines:
-        # Parse path, translate coordinates
-        # Simple approach: wrap in a <g> with transform
-        transformed_lines.append(f'<path d="{d}" />')
+    xmin, xmax = min(xs) - margin, max(xs) + margin
+    ymin_neg, ymax_neg = -max(ys) - margin, -min(ys) + margin
+    vw, vh = xmax - xmin, ymax_neg - ymin_neg
 
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'viewBox="{xmin} {ymin} {vw} {vh}" '
+        f'viewBox="{xmin} {ymin_neg} {vw} {vh}" '
         f'width="{width}" height="{height}">\n'
         f'<rect width="100%" height="100%" fill="#1e293b"/>\n'
         f'<g fill="none" stroke="#475569" stroke-width="{max(vw / 3000, 0.5)}" '
         f'stroke-linecap="round" stroke-linejoin="round">\n'
-        f"{''.join(transformed_lines)}\n"
-        f"</g>\n{''.join(texts)}\n"
+        f"{''.join(f'<path d="{d}" />' for d in lines)}\n"
+        f"</g>\n"
+        f"{''.join(texts)}\n"
         f"</svg>"
     )
 

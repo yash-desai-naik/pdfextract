@@ -61,10 +61,11 @@ export default function DXFEditor({
     const c = fabricRef.current!;
     const svgPx = (px / c.width!) * SVG_RENDER_W;
     const svgPy = (py / c.height!) * SVG_RENDER_H;
-    // SVG render pixel → real DXF unit → metres
-    const realX = xmin + (svgPx - offX) / fitScale;
-    const realY = ymin + (svgPy - offY) / fitScale;
-    return [realX / 1000, realY / 1000];
+    // SVG viewBox Y is negated (DXF Y-up → SVG Y-down), negate back
+    const viewX = xmin + (svgPx - offX) / fitScale;
+    const viewY = ymin + (svgPy - offY) / fitScale;
+    // Negate Y to get back to DXF Y-up, then mm → m
+    return [viewX / 1000, -viewY / 1000];
   };
 
   // ===== Refs to avoid stale closures in Fabric event handlers =====
