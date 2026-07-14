@@ -6,6 +6,7 @@ import Toolbar from "./Toolbar";
 
 interface Props {
   dxfPath: string;
+  pdfPath?: string;
   bounds: number[];
   unitLabel: string;
   rooms: RoomData[];
@@ -26,6 +27,7 @@ function nextId() {
 
 export default function DXFEditor({
   dxfPath,
+  pdfPath,
   bounds,
   unitLabel,
   rooms,
@@ -261,17 +263,21 @@ export default function DXFEditor({
     finishExclRef.current = finishExclusion;
   }, [finishExclusion]);
 
-  // ===== Load DXF as server-rendered SVG background =====
+  // ===== Load background (PDF clean render preferred) =====
   useEffect(() => {
     const c = fabricRef.current;
-    if (!c || !dxfPath) return;
-    console.log("[Editor] Loading DXF background SVG...");
-    const svgUrl = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}`;
+    if (!c) return;
+    const src = pdfPath || dxfPath;
+    if (!src) return;
+    const t = Date.now();
+    const endpoint = pdfPath ? "/api/pdf/render" : "/api/dxf/render";
+    const url = `${endpoint}?path=${encodeURIComponent(src)}&width=${c.width}&height=${c.height}&_=${t}`;
+    console.log("[Editor] Loading", pdfPath ? "PDF" : "DXF", "background...");
+    c.backgroundImage = undefined;
     c.setBackgroundImage(
-      svgUrl,
+      url,
       () => {
         c.renderAll();
-        console.log("[Editor] Background loaded");
       },
       {
         scaleX: 1,
@@ -282,7 +288,7 @@ export default function DXFEditor({
         top: 0,
       },
     );
-  }, [dxfPath]);
+  }, [dxfPath, pdfPath]);
 
   // ===== Re-render rooms when they change =====
   useEffect(() => {

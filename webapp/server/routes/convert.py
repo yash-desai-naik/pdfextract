@@ -57,6 +57,7 @@ async def convert_pdf(file: UploadFile = File(...)):
         return {
             "status": "ok",
             "dxf_path": str(dxf_path),
+            "pdf_path": str(pdf_path),
             "filename": file.filename,
             "scale": scale.to_dict(),
             "entity_count": entity_count,

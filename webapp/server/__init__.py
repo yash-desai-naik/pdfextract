@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .routes import convert, dxf_api, takeoff
+from .routes import convert, dxf_api, pdf_render, takeoff
 
 app = FastAPI(title="Warmset Web App", version="1.0.0")
 
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(convert.router, prefix="/api")
 app.include_router(dxf_api.router, prefix="/api")
 app.include_router(takeoff.router, prefix="/api")
+app.include_router(pdf_render.router, prefix="/api")
 
 
 @app.get("/api/health")

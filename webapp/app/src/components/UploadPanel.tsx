@@ -3,10 +3,11 @@ import { Upload, FileText, AlertCircle } from "lucide-react";
 
 interface Props {
   onComplete: (
-    path: string,
+    dxfPath: string,
     bounds: number[],
     unit: string,
     scale: Record<string, any>,
+    pdfPath?: string,
   ) => void;
   onError: (msg: string) => void;
 }
@@ -71,6 +72,7 @@ export default function UploadPanel({ onComplete, onError }: Props) {
           boundsData.bounds,
           boundsData.unit,
           convResult.scale || {},
+          convResult.pdf_path,
         );
       } catch (e: any) {
         console.error("[Upload] Error:", e);

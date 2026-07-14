@@ -7,6 +7,7 @@ import ResultsPanel from "./components/ResultsPanel";
 export default function App() {
   const [mode, setMode] = useState<AppMode>("upload");
   const [dxfPath, setDxfPath] = useState<string>("");
+  const [pdfPath, setPdfPath] = useState<string>("");
   const [bounds, setBounds] = useState<number[]>([0, 0, 100, 100]);
   const [unitLabel, setUnitLabel] = useState("");
   const [rooms, setRooms] = useState<RoomData[]>([]);
@@ -21,8 +22,10 @@ export default function App() {
       bnds: number[],
       unit: string,
       scaleInfo: Record<string, any>,
+      pdf?: string,
     ) => {
       setDxfPath(path);
+      setPdfPath(pdf || "");
       setBounds(bnds);
       setUnitLabel(unit);
       setScale(scaleInfo);
@@ -118,6 +121,7 @@ export default function App() {
         {mode === "editor" && dxfPath && (
           <DXFEditor
             dxfPath={dxfPath}
+            pdfPath={pdfPath}
             bounds={bounds}
             unitLabel={unitLabel}
             rooms={rooms}
