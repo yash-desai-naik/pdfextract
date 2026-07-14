@@ -274,7 +274,13 @@ export default function DXFEditor({
     c.setBackgroundImage(
       url,
       () => {
-        c.renderAll();
+        const img = c.backgroundImage;
+        if (img) {
+          const sx = c.width! / SVG_RENDER_W;
+          const sy = c.height! / SVG_RENDER_H;
+          img.set({ scaleX: sx, scaleY: sy, left: 0, top: 0 });
+          c.renderAll();
+        }
       },
       {
         scaleX: 1,
