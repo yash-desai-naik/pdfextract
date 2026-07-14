@@ -32,18 +32,13 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
     lines: list[str] = []
     texts: list[str] = []
     xs, ys = [], []
-    # Aggressive filter: only walls and room outlines, skip annotations/hatches
-    MIN_LINE_MM = 1000  # skip lines shorter than 1m (dimension ticks, hatches)
-    R = 10  # rounding precision (10 mm)
+    R = 5  # rounding precision (5 mm) — merges near-duplicate lines
 
     for e in msp:
         try:
             t = e.dxftype()
             if t == "LINE":
                 x1, y1, x2, y2 = e.dxf.start.x, e.dxf.start.y, e.dxf.end.x, e.dxf.end.y
-                dx, dy = x2 - x1, y2 - y1
-                if (dx * dx + dy * dy) ** 0.5 < MIN_LINE_MM:
-                    continue  # skip short annotation lines
                 key = f"{round(x1, R)},{round(y1, R)}-{round(x2, R)},{round(y2, R)}"
                 if key in seen_lines:
                     continue
@@ -52,8 +47,6 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
                 ys += [y1, y2]
                 lines.append(f"M{x1},{-y1}L{x2},{-y2}")
             elif t == "LWPOLYLINE":
-                if not e.closed:
-                    continue  # skip open polylines (annotation fragments)
                 pts = e.get_points("xy")
                 key = "|".join(f"{round(p[0], R)},{round(p[1], R)}" for p in pts[:4])
                 if key in seen_lines:
@@ -61,15 +54,26 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
                 seen_lines.add(key)
                 xs += [p[0] for p in pts]
                 ys += [p[1] for p in pts]
-                d = "M" + "L".join(f"{p[0]},{-p[1]}" for p in pts) + "Z"
+                d = "M" + "L".join(f"{p[0]},{-p[1]}" for p in pts)
+                if e.closed:
+                    d += "Z"
                 lines.append(d)
             elif t == "CIRCLE":
                 c = e.dxf.center
                 r = e.dxf.radius
-                if r < 500:
-                    continue  # skip small circles (annotation dots)
                 xs += [c.x - r, c.x + r]
                 ys += [c.y - r, c.y + r]
+            elif t == "MTEXT":
+                x, y, txt = e.dxf.insert.x, e.dxf.insert.y, e.dxf.text[:60]
+                key = f"{round(x, R)},{round(y, R)}|{txt}"
+                if key in seen_texts:
+                    continue
+                seen_texts.add(key)
+                texts.append(
+                    f'<text x="{x}" y="{-y}" fill="#64748b" '
+                    f'font-size="{max(e.dxf.char_height or 3, 1)}" '
+                    f'font-family="monospace">{_escape(txt)}</text>'
+                )
         except Exception:
             pass
 
