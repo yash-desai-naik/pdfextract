@@ -268,7 +268,7 @@ export default function DXFEditor({
     const c = fabricRef.current;
     if (!c || !dxfPath) return;
     const t = Date.now();
-    const url = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}&_=${t}`;
+    const url = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${SVG_RENDER_W}&height=${SVG_RENDER_H}&_=${t}`;
     console.log("[Editor] Loading DXF SVG background...");
     c.backgroundImage = undefined;
     c.setBackgroundImage(
