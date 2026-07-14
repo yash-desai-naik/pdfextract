@@ -46,6 +46,8 @@ export default function DXFEditor({
   const [currentExcl, setCurrentExcl] = useState<number[][]>([]);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0 });
+  const roomsRef = useRef(rooms);
+  roomsRef.current = rooms;
   const SVG_RENDER_W = 2000;
   const SVG_RENDER_H = 1500;
 
@@ -282,7 +284,7 @@ export default function DXFEditor({
           c.renderAll();
         }
         // Force room re-render after background loads (fixes vanish on back)
-        drawRooms(c, rooms);
+        drawRooms(c, roomsRef.current);
       },
       {
         scaleX: 1,
