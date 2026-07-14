@@ -73,6 +73,28 @@ export default function DXFEditor({
     return [viewX / 1000, -viewY / 1000];
   };
 
+  // Inverse: metres → canvas pixel (for rendering persisted rooms)
+  const metresToPixel = (mx: number, my: number): [number, number] => {
+    const [xmin, ymin_raw, xmax, ymax_raw] = bounds;
+    const vw = xmax - xmin;
+    const vh = ymax_raw - ymin_raw;
+    const ymin_vb = -ymax_raw;
+    const fitScale = Math.min(SVG_RENDER_W / vw, SVG_RENDER_H / vh);
+    const offX = (SVG_RENDER_W - vw * fitScale) / 2;
+    const offY = (SVG_RENDER_H - vh * fitScale) / 2;
+    const c = fabricRef.current!;
+    // metres → DXF mm → viewBox Y (negated)
+    const mmX = mx * 1000;
+    const mmY = -my * 1000; // negate Y-up back to SVG Y-down
+    // viewBox coordinate → SVG pixel
+    const svgPx = ((mmX - xmin) / fitScale) * 1 + offX;
+    const svgPy = ((mmY - ymin_vb) / fitScale) * 1 + offY;
+    // SVG pixel → canvas pixel
+    const cpx = (svgPx / SVG_RENDER_W) * c.width!;
+    const cpy = (svgPy / SVG_RENDER_H) * c.height!;
+    return [cpx, cpy];
+  };
+
   // ===== Refs to avoid stale closures in Fabric event handlers =====
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -298,6 +320,7 @@ export default function DXFEditor({
   }, [dxfPath]);
 
   // Draw rooms on canvas (extracted for reuse)
+  // Room vertices are in metres — convert to canvas pixels via metresToPixel
   const drawRooms = useCallback((c: fabric.Canvas, roomList: RoomData[]) => {
     const toRemove = c
       .getObjects()
@@ -309,7 +332,10 @@ export default function DXFEditor({
 
     for (const room of roomList) {
       if (room.vertices.length >= 3) {
-        const pts = room.vertices.map((p) => ({ x: p[0], y: p[1] }));
+        const pts = room.vertices.map((p) => {
+          const [px, py] = metresToPixel(p[0], p[1]);
+          return { x: px, y: py };
+        });
         c.add(
           new fabric.Polygon(pts, {
             fill: ROOM_FILL,
@@ -338,7 +364,10 @@ export default function DXFEditor({
       }
       for (const exc of room.exclusions) {
         if (exc.length >= 3) {
-          const pts = exc.map((p) => ({ x: p[0], y: p[1] }));
+          const pts = exc.map((p) => {
+            const [px, py] = metresToPixel(p[0], p[1]);
+            return { x: px, y: py };
+          });
           c.add(
             new fabric.Polygon(pts, {
               fill: EXCL_FILL,
