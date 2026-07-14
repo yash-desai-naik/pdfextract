@@ -113,8 +113,8 @@ export default function UploadPanel({ onComplete, onError }: Props) {
           Underfloor Heating Takeoff
         </h2>
         <p className="text-sm text-slate-400 mb-8 max-w-sm mx-auto leading-relaxed">
-          Upload a PDF architectural drawing. We'll convert it to DXF, then you
-          can trace rooms and calculate Warmset heating requirements.
+          Upload a PDF architectural drawing then you can trace rooms and
+          calculate Warmset heating requirements.
         </p>
 
         {/* Drop zone */}

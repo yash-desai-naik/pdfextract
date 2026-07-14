@@ -51,6 +51,11 @@ export default function DXFEditor({
   const [currentExcl, setCurrentExcl] = useState<number[][]>([]);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0 });
+  const [layerList, setLayerList] = useState<{ name: string; count: number }[]>(
+    [],
+  );
+  const [selectedLayers, setSelectedLayers] = useState<Set<string>>(new Set());
+  const [showLayers, setShowLayers] = useState(false);
   const roomsRef = useRef(rooms);
   roomsRef.current = rooms;
   const SVG_RENDER_W = 2000;
@@ -338,12 +343,25 @@ export default function DXFEditor({
     finishExclRef.current = finishExclusion;
   }, [finishExclusion]);
 
-  // ===== Load DXF SVG background (vector, zoomable, correct coords) =====
+  // ===== Load layer list from DXF =====
+  useEffect(() => {
+    if (!dxfPath) return;
+    fetch(`/api/dxf/layers?path=${encodeURIComponent(dxfPath)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setLayerList(data.layers || []);
+        setSelectedLayers(new Set((data.layers || []).map((l: any) => l.name)));
+      })
+      .catch(() => {});
+  }, [dxfPath]);
+
+  // ===== Load DXF SVG background with layer filter =====
   useEffect(() => {
     const c = fabricRef.current;
     if (!c || !dxfPath) return;
     const t = Date.now();
-    const url = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${SVG_RENDER_W}&height=${SVG_RENDER_H}&_=${t}`;
+    const layersParam = Array.from(selectedLayers).join(",");
+    const url = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${SVG_RENDER_W}&height=${SVG_RENDER_H}&layers=${encodeURIComponent(layersParam)}&_=${t}`;
     console.log("[Editor] Loading DXF SVG background...");
     c.backgroundImage = undefined;
     c.setBackgroundImage(
@@ -368,7 +386,7 @@ export default function DXFEditor({
         top: 0,
       },
     );
-  }, [dxfPath]);
+  }, [dxfPath, selectedLayers]);
 
   // Draw rooms on canvas (extracted for reuse)
   // Room vertices are in metres — convert to canvas pixels via metresToPixel
@@ -568,6 +586,13 @@ export default function DXFEditor({
           roomCount={rooms.length}
           totalArea={totalArea}
         />
+        <button
+          onClick={() => setShowLayers(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-all shrink-0 mr-1"
+          title="Filter layers"
+        >
+          &#9776; Layers ({selectedLayers.size}/{layerList.length})
+        </button>
         <a
           href={`/api/dxf/download?path=${encodeURIComponent(dxfPath)}`}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-all shrink-0 mr-2"
@@ -576,6 +601,76 @@ export default function DXFEditor({
           ⬇ DXF
         </a>
       </div>
+
+      {/* Layers modal */}
+      {showLayers && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={() => setShowLayers(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#1e293b",
+              border: "1px solid #334155",
+              borderRadius: 12,
+              padding: 20,
+              maxWidth: 400,
+              width: "90%",
+              maxHeight: "70vh",
+              overflowY: "auto",
+            }}
+          >
+            <h3 style={{ color: "#e2e8f0", fontSize: 14, marginBottom: 12 }}>
+              DXF Layers
+            </h3>
+            {layerList.map((layer) => (
+              <label
+                key={layer.name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 8px",
+                  cursor: "pointer",
+                  borderRadius: 4,
+                  fontSize: 13,
+                  color: "#cbd5e1",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedLayers.has(layer.name)}
+                  onChange={() => {
+                    const next = new Set(selectedLayers);
+                    if (next.has(layer.name)) next.delete(layer.name);
+                    else next.add(layer.name);
+                    setSelectedLayers(next);
+                  }}
+                />
+                <span>{layer.name}</span>
+                <span
+                  style={{ marginLeft: "auto", color: "#64748b", fontSize: 11 }}
+                >
+                  {layer.count}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 flex overflow-hidden">
         <div
           ref={containerRef}

@@ -11,8 +11,37 @@ from fastapi.responses import FileResponse, HTMLResponse
 router = APIRouter()
 
 
+@router.get("/dxf/layers")
+async def get_layers(path: str = Query(...)):
+    """Return all layer names with entity counts from a DXF file."""
+    try:
+        doc = ezdxf.readfile(path)
+    except Exception as e:
+        raise HTTPException(400, f"Cannot read DXF: {e}")
+
+    msp = doc.modelspace()
+    layer_counts: dict[str, int] = {}
+    for e in msp:
+        try:
+            layer = e.dxf.layer or "0"
+            layer_counts[layer] = layer_counts.get(layer, 0) + 1
+        except Exception:
+            pass
+
+    layers = [
+        {"name": name, "count": count}
+        for name, count in sorted(layer_counts.items(), key=lambda x: -x[1])
+    ]
+    return {"layers": layers, "total": sum(lc.values())}
+
+
 @router.get("/dxf/render")
-async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 1500):
+async def render_dxf(
+    path: str = Query(...),
+    width: int = 2000,
+    height: int = 1500,
+    layers: str = "",  # comma-separated, empty = all
+):
     """Render a DXF file to SVG. Returns SVG string directly — browser loads as image."""
     try:
         doc = ezdxf.readfile(path)
@@ -20,6 +49,9 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
         raise HTTPException(400, f"Cannot read DXF: {e}")
 
     msp = doc.modelspace()
+    layer_filter: set[str] | None = (
+        {l.strip() for l in layers.split(",") if l.strip()} if layers else None
+    )
 
     from src.cad.units import UnitDetector
 
@@ -36,6 +68,10 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
 
     for e in msp:
         try:
+            if layer_filter is not None:
+                ent_layer = e.dxf.layer or "0"
+                if ent_layer not in layer_filter:
+                    continue
             t = e.dxftype()
             if t == "LINE":
                 x1, y1, x2, y2 = e.dxf.start.x, e.dxf.start.y, e.dxf.end.x, e.dxf.end.y
