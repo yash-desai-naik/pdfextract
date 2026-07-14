@@ -387,7 +387,26 @@ export default function DXFEditor({
   // ===== Re-render rooms when they change =====
   useEffect(() => {
     const c = fabricRef.current;
-    if (!c) return;
+    if (!c) {
+      console.warn("[Rooms] No canvas");
+      return;
+    }
+    console.log(
+      "[Rooms] Drawing",
+      rooms.length,
+      "rooms, coords:",
+      rooms[0]?.vertices.slice(0, 2),
+    );
+    // Draw a test point to confirm canvas is working
+    const test = new fabric.Circle({
+      left: 100,
+      top: 100,
+      radius: 20,
+      fill: "red",
+      selectable: false,
+      evented: false,
+    });
+    c.add(test);
     drawRooms(c, rooms);
   }, [rooms, drawRooms]);
 
