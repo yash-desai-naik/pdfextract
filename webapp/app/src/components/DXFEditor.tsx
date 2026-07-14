@@ -22,7 +22,7 @@ const EXCL_FILL = "rgba(239, 68, 68, 0.15)";
 
 let roomIdCounter = 0;
 function nextId() {
-  return `room_${++roomIdCounter}`;
+  return `room_${Date.now()}_${++roomIdCounter}`;
 }
 
 export default function DXFEditor({
@@ -345,7 +345,7 @@ export default function DXFEditor({
           new fabric.Polygon(pts, {
             fill: ROOM_FILL,
             stroke: ROOM_COLOR,
-            strokeWidth: 2,
+            strokeWidth: 1.5,
             selectable: false,
             evented: false,
             _type: "room",
@@ -357,7 +357,7 @@ export default function DXFEditor({
           new fabric.Text(`${room.name}\n${room.area?.toFixed(1) || ""}m²`, {
             left: cx,
             top: cy,
-            fontSize: 13,
+            fontSize: 10,
             fill: "#e2e8f0",
             originX: "center",
             originY: "center",
