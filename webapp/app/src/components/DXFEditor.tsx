@@ -284,8 +284,6 @@ export default function DXFEditor({
         // Force room re-render after background loads (fixes vanish on back)
         drawRooms(c, rooms);
       },
-      { scaleX: 1, scaleY: 1, originX: "left", originY: "top", left: 0, top: 0 },
-    );
       {
         scaleX: 1,
         scaleY: 1,
@@ -299,33 +297,56 @@ export default function DXFEditor({
 
   // Draw rooms on canvas (extracted for reuse)
   const drawRooms = useCallback((c: fabric.Canvas, roomList: RoomData[]) => {
-    const toRemove = c.getObjects().filter(
-      (o: any) => o._type === "room" || o._type === "excl" || o._type === "label",
-    );
+    const toRemove = c
+      .getObjects()
+      .filter(
+        (o: any) =>
+          o._type === "room" || o._type === "excl" || o._type === "label",
+      );
     toRemove.forEach((o) => c.remove(o));
 
     for (const room of roomList) {
       if (room.vertices.length >= 3) {
         const pts = room.vertices.map((p) => ({ x: p[0], y: p[1] }));
-        c.add(new fabric.Polygon(pts, {
-          fill: ROOM_FILL, stroke: ROOM_COLOR, strokeWidth: 2,
-          selectable: false, evented: false, _type: "room",
-        }));
+        c.add(
+          new fabric.Polygon(pts, {
+            fill: ROOM_FILL,
+            stroke: ROOM_COLOR,
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+            _type: "room",
+          }),
+        );
         const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
         const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-        c.add(new fabric.Text(`${room.name}\n${room.area?.toFixed(1) || ""}m²`, {
-          left: cx, top: cy, fontSize: 13, fill: "#e2e8f0",
-          originX: "center", originY: "center",
-          selectable: false, evented: false, _type: "label",
-        }));
+        c.add(
+          new fabric.Text(`${room.name}\n${room.area?.toFixed(1) || ""}m²`, {
+            left: cx,
+            top: cy,
+            fontSize: 13,
+            fill: "#e2e8f0",
+            originX: "center",
+            originY: "center",
+            selectable: false,
+            evented: false,
+            _type: "label",
+          }),
+        );
       }
       for (const exc of room.exclusions) {
         if (exc.length >= 3) {
           const pts = exc.map((p) => ({ x: p[0], y: p[1] }));
-          c.add(new fabric.Polygon(pts, {
-            fill: EXCL_FILL, stroke: EXCL_COLOR, strokeWidth: 2,
-            selectable: false, evented: false, _type: "excl",
-          }));
+          c.add(
+            new fabric.Polygon(pts, {
+              fill: EXCL_FILL,
+              stroke: EXCL_COLOR,
+              strokeWidth: 2,
+              selectable: false,
+              evented: false,
+              _type: "excl",
+            }),
+          );
         }
       }
     }
