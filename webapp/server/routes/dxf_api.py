@@ -26,23 +26,32 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
     detector = UnitDetector(doc)
     detector.detect()
 
-    # Collect all geometry and compute bounds
+    # Collect all geometry and compute bounds (with dedup)
+    seen_lines: set[str] = set()
+    seen_texts: set[str] = set()
     lines: list[str] = []
     texts: list[str] = []
     xs, ys = [], []
+    R = 1  # rounding precision (1 mm)
 
     for e in msp:
         try:
             t = e.dxftype()
             if t == "LINE":
-                xs += [e.dxf.start.x, e.dxf.end.x]
-                ys += [e.dxf.start.y, e.dxf.end.y]
-                # Negate Y: DXF is Y-up, SVG viewBox is Y-down
-                lines.append(
-                    f"M{e.dxf.start.x},{-e.dxf.start.y}L{e.dxf.end.x},{-e.dxf.end.y}"
-                )
+                x1, y1, x2, y2 = e.dxf.start.x, e.dxf.start.y, e.dxf.end.x, e.dxf.end.y
+                key = f"{round(x1, R)},{round(y1, R)}-{round(x2, R)},{round(y2, R)}"
+                if key in seen_lines:
+                    continue
+                seen_lines.add(key)
+                xs += [x1, x2]
+                ys += [y1, y2]
+                lines.append(f"M{x1},{-y1}L{x2},{-y2}")
             elif t == "LWPOLYLINE":
                 pts = e.get_points("xy")
+                key = "|".join(f"{round(p[0], R)},{round(p[1], R)}" for p in pts[:4])
+                if key in seen_lines:
+                    continue
+                seen_lines.add(key)
                 xs += [p[0] for p in pts]
                 ys += [p[1] for p in pts]
                 d = "M" + "L".join(f"{p[0]},{-p[1]}" for p in pts)
@@ -55,10 +64,15 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
                 xs += [c.x - r, c.x + r]
                 ys += [c.y - r, c.y + r]
             elif t == "MTEXT":
+                x, y, txt = e.dxf.insert.x, e.dxf.insert.y, e.dxf.text[:60]
+                key = f"{round(x, R)},{round(y, R)}|{txt}"
+                if key in seen_texts:
+                    continue
+                seen_texts.add(key)
                 texts.append(
-                    f'<text x="{e.dxf.insert.x}" y="{e.dxf.insert.y}" '
-                    f'fill="#64748b" font-size="{max(e.dxf.char_height or 3, 1)}" '
-                    f'font-family="monospace">{_escape(e.dxf.text[:60])}</text>'
+                    f'<text x="{x}" y="{-y}" fill="#64748b" '
+                    f'font-size="{max(e.dxf.char_height or 3, 1)}" '
+                    f'font-family="monospace">{_escape(txt)}</text>'
                 )
         except Exception:
             pass
