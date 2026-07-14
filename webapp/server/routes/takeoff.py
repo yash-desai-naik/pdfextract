@@ -23,6 +23,8 @@ class TakeoffRequest(BaseModel):
 @router.post("/takeoff")
 async def calculate_takeoff(req: TakeoffRequest):
     """Run the Warmset pipeline on traced rooms."""
+    import logging
+
     from shapely.geometry import Polygon
 
     from src.heating.calculator import HeatingCalculator
@@ -30,10 +32,18 @@ async def calculate_takeoff(req: TakeoffRequest):
     from src.heating.strips import WarmsetStripGenerator
     from src.models.rooms import ExclusionArea, Room
 
+    logger = logging.getLogger("warmset.takeoff")
     engine_rooms = []
     for r in req.rooms:
         poly = Polygon(r.vertices)
+        logger.info(
+            "Room %s: poly area=%.4f, %d exclusions received",
+            r.name,
+            poly.area,
+            len(r.exclusions),
+        )
         if not poly.is_valid or poly.area < 0.01:
+            logger.warning("Room %s skipped: invalid or too small", r.name)
             continue
         room = Room(
             name=r.name,
@@ -43,8 +53,18 @@ async def calculate_takeoff(req: TakeoffRequest):
             confidence=0.95,
             gross_area_m2=poly.area,
         )
-        for exc_verts in r.exclusions:
+        for i, exc_verts in enumerate(r.exclusions):
+            logger.info("  Exclusion %d: %d vertices", i, len(exc_verts))
+            if len(exc_verts) < 3:
+                logger.warning("  Exclusion %d: skipped (<3 vertices)", i)
+                continue
             exc_poly = Polygon(exc_verts)
+            logger.info(
+                "  Exclusion %d: valid=%s area=%.4f",
+                i,
+                exc_poly.is_valid,
+                exc_poly.area,
+            )
             if exc_poly.is_valid and exc_poly.area > 0.001:
                 room.exclusions.append(
                     ExclusionArea(
