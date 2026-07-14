@@ -523,6 +523,7 @@ export default function DXFEditor({
           onFitView={handleFitView}
           onDelete={handleDelete}
           onFinishRoom={finishRoom}
+          onFinishExclusion={finishExclusion}
           onCalculate={onCalculate}
           calculating={calculating}
           roomCount={rooms.length}

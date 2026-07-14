@@ -19,6 +19,7 @@ interface Props {
   onFitView: () => void;
   onDelete: () => void;
   onFinishRoom: () => void;
+  onFinishExclusion: () => void;
   onCalculate: () => void;
   calculating: boolean;
   roomCount: number;
@@ -32,6 +33,7 @@ export default function Toolbar({
   onFitView,
   onDelete,
   onFinishRoom,
+  onFinishExclusion,
   onCalculate,
   calculating,
   roomCount,
@@ -109,14 +111,15 @@ export default function Toolbar({
 
       {/* Finish room (shown when drawing) */}
       {(mode === "room" || mode === "exclusion") && (
-        <button
-          onClick={onFinishRoom}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-brand/20 text-brand hover:bg-brand/30 transition-all mr-2"
-        >
-          <Check className="w-3.5 h-3.5" strokeWidth={1.5} />
-          <span>Finish</span>
-        </button>
-      )}
+        {(mode === "room" || mode === "freeform" || mode === "exclusion") && (
+          <button
+            onClick={mode === "exclusion" ? onFinishExclusion : onFinishRoom}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-brand/20 text-brand hover:bg-brand/30 transition-all mr-2"
+          >
+            <Check className="w-3.5 h-3.5" strokeWidth={1.5} />
+            <span>{mode === "exclusion" ? "Finish Exclusion" : "Finish"}</span>
+          </button>
+        )}
 
       {/* Calculate */}
       <button
