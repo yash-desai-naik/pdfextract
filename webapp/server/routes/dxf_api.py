@@ -32,7 +32,7 @@ async def get_layers(path: str = Query(...)):
         {"name": name, "count": count}
         for name, count in sorted(layer_counts.items(), key=lambda x: -x[1])
     ]
-    return {"layers": layers, "total": sum(lc.values())}
+    return {"layers": layers, "total": sum(layer_counts.values())}
 
 
 @router.get("/dxf/render")
