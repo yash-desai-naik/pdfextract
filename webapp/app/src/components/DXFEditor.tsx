@@ -263,19 +263,13 @@ export default function DXFEditor({
     finishExclRef.current = finishExclusion;
   }, [finishExclusion]);
 
-  // ===== Load background (PDF clean render preferred) =====
+  // ===== Load DXF SVG background (vector, zoomable, correct coords) =====
   useEffect(() => {
     const c = fabricRef.current;
-    if (!c) return;
-    const src = pdfPath || dxfPath;
-    if (!src) return;
+    if (!c || !dxfPath) return;
     const t = Date.now();
-    const endpoint = pdfPath ? "/api/pdf/render" : "/api/dxf/render";
-    const params = pdfPath
-      ? `path=${encodeURIComponent(src)}&dpi=300&_=${t}`
-      : `path=${encodeURIComponent(src)}&width=${c.width}&height=${c.height}&_=${t}`;
-    const url = `${endpoint}?${params}`;
-    console.log("[Editor] Loading", pdfPath ? "PDF" : "DXF", "background...");
+    const url = `/api/dxf/render?path=${encodeURIComponent(dxfPath)}&width=${c.width}&height=${c.height}&_=${t}`;
+    console.log("[Editor] Loading DXF SVG background...");
     c.backgroundImage = undefined;
     c.setBackgroundImage(
       url,
@@ -291,7 +285,7 @@ export default function DXFEditor({
         top: 0,
       },
     );
-  }, [dxfPath, pdfPath]);
+  }, [dxfPath]);
 
   // ===== Re-render rooms when they change =====
   useEffect(() => {
