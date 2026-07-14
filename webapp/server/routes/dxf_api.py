@@ -32,7 +32,7 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
     lines: list[str] = []
     texts: list[str] = []
     xs, ys = [], []
-    R = 1  # rounding precision (1 mm)
+    R = 5  # rounding precision (5 mm) — merges near-duplicate lines
 
     for e in msp:
         try:
@@ -91,7 +91,7 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
         f'viewBox="{xmin} {ymin_neg} {vw} {vh}" '
         f'width="{width}" height="{height}">\n'
         f'<rect width="100%" height="100%" fill="#1e293b"/>\n'
-        f'<g fill="none" stroke="#475569" stroke-width="{max(vw / 3000, 0.5)}" '
+        f'<g fill="none" stroke="#475569" stroke-width="{max(vw / 2000, 1.0)}" '
         f'stroke-linecap="round" stroke-linejoin="round">\n'
         f"{''.join(f'<path d="{d}" />' for d in lines)}\n"
         f"</g>\n"
