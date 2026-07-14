@@ -271,7 +271,10 @@ export default function DXFEditor({
     if (!src) return;
     const t = Date.now();
     const endpoint = pdfPath ? "/api/pdf/render" : "/api/dxf/render";
-    const url = `${endpoint}?path=${encodeURIComponent(src)}&width=${c.width}&height=${c.height}&_=${t}`;
+    const params = pdfPath
+      ? `path=${encodeURIComponent(src)}&dpi=300&_=${t}`
+      : `path=${encodeURIComponent(src)}&width=${c.width}&height=${c.height}&_=${t}`;
+    const url = `${endpoint}?${params}`;
     console.log("[Editor] Loading", pdfPath ? "PDF" : "DXF", "background...");
     c.backgroundImage = undefined;
     c.setBackgroundImage(
