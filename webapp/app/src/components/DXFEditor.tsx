@@ -80,7 +80,17 @@ export default function DXFEditor({
     const viewX = xmin + (svgPx - offX) / fitScale;
     const viewY = ymin_vb + (svgPy - offY) / fitScale;
     // viewY is in SVG negated space → negate back to DXF Y-up, mm → m
-    return [viewX / 1000, -viewY / 1000];
+    const result: [number, number] = [viewX / 1000, -viewY / 1000];
+    // Log first few clicks for debugging
+    if (px < 20 && py < 20) {
+      console.log("[px2m] bounds:", bounds);
+      console.log("[px2m] fitScale:", fitScale, "off:", offX, offY);
+      console.log("[px2m] canvas:", c.width, "x", c.height);
+      console.log("[px2m] svgPx:", svgPx, "svgPy:", svgPy);
+      console.log("[px2m] viewX:", viewX, "viewY:", viewY);
+      console.log("[px2m] result (m):", result);
+    }
+    return result;
   };
 
   // Inverse: metres → canvas pixel (for rendering persisted rooms)
