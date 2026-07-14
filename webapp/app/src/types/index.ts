@@ -26,8 +26,10 @@ export interface DXFData {
 export interface RoomData {
   id: string;
   name: string;
-  vertices: number[][];
+  vertices: number[][]; // in metres (for calculation)
+  pixelVertices?: number[][]; // in canvas pixels (for rendering, exact)
   exclusions: number[][][];
+  pixelExclusions?: number[][][];
   area?: number;
 }
 

@@ -264,7 +264,9 @@ export default function DXFEditor({
       id: nextId(),
       name,
       vertices: toMetres(currentRoom.vertices),
+      pixelVertices: currentRoom.vertices.map((p) => [...p]),
       exclusions: currentRoom.exclusions.map((e) => toMetres(e)),
+      pixelExclusions: currentRoom.exclusions.map((e) => e.map((p) => [...p])),
     };
     onRoomsChange([...rooms, newRoom]);
     setCurrentRoom(null);
@@ -332,7 +334,10 @@ export default function DXFEditor({
 
     for (const room of roomList) {
       if (room.vertices.length >= 3) {
-        const pts = room.vertices.map((p) => {
+        // Use exact pixel coords when available, fall back to metres→pixels
+        const src = room.pixelVertices || room.vertices;
+        const pts = src.map((p) => {
+          if (room.pixelVertices) return { x: p[0], y: p[1] };
           const [px, py] = metresToPixel(p[0], p[1]);
           return { x: px, y: py };
         });
@@ -362,9 +367,12 @@ export default function DXFEditor({
           }),
         );
       }
-      for (const exc of room.exclusions) {
+      for (let i = 0; i < room.exclusions.length; i++) {
+        const exc = room.exclusions[i];
         if (exc.length >= 3) {
-          const pts = exc.map((p) => {
+          const pxSrc = room.pixelExclusions?.[i] || exc;
+          const pts = pxSrc.map((p) => {
+            if (room.pixelExclusions) return { x: p[0], y: p[1] };
             const [px, py] = metresToPixel(p[0], p[1]);
             return { x: px, y: py };
           });
