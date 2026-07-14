@@ -33,7 +33,7 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
     texts: list[str] = []
     xs, ys = [], []
     # Aggressive filter: only walls and room outlines, skip annotations/hatches
-    MIN_LINE_MM = 1000  # skip lines shorter than 1m (dimension ticks, hatches)
+    MIN_LINE_MM = 20  # skip lines shorter than 20mm (noise fragments)
     R = 10  # rounding precision (10 mm)
 
     for e in msp:
@@ -52,8 +52,6 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
                 ys += [y1, y2]
                 lines.append(f"M{x1},{-y1}L{x2},{-y2}")
             elif t == "LWPOLYLINE":
-                if not e.closed:
-                    continue  # skip open polylines (annotation fragments)
                 pts = e.get_points("xy")
                 key = "|".join(f"{round(p[0], R)},{round(p[1], R)}" for p in pts[:4])
                 if key in seen_lines:
@@ -66,8 +64,7 @@ async def render_dxf(path: str = Query(...), width: int = 2000, height: int = 15
             elif t == "CIRCLE":
                 c = e.dxf.center
                 r = e.dxf.radius
-                if r < 500:
-                    continue  # skip small circles (annotation dots)
+                # keep all circles
                 xs += [c.x - r, c.x + r]
                 ys += [c.y - r, c.y + r]
         except Exception:
