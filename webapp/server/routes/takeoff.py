@@ -37,11 +37,14 @@ async def calculate_takeoff(req: TakeoffRequest):
     for r in req.rooms:
         poly = Polygon(r.vertices)
         logger.info(
-            "Room %s: poly area=%.4f, %d exclusions received",
+            "Room %s: poly area=%.4f, %d vertices, %d exclusions",
             r.name,
             poly.area,
+            len(r.vertices),
             len(r.exclusions),
         )
+        if r.vertices:
+            logger.info("  First 4 verts: %s", r.vertices[:4])
         if not poly.is_valid or poly.area < 0.01:
             logger.warning("Room %s skipped: invalid or too small", r.name)
             continue
