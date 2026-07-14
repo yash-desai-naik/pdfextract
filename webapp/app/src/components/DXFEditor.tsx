@@ -275,10 +275,26 @@ export default function DXFEditor({
 
   const finishExclusion = useCallback(() => {
     if (currentExcl.length < 3 || !currentRoom) return;
+    // Add exclusion to room data
     setCurrentRoom({
       ...currentRoom,
       exclusions: [...currentRoom.exclusions, [...currentExcl]],
     });
+    // Draw a permanent visual for the finished exclusion on canvas
+    const c = fabricRef.current;
+    if (c) {
+      const pts = currentExcl.map((p) => ({ x: p[0], y: p[1] }));
+      const poly = new fabric.Polygon(pts, {
+        fill: EXCL_FILL,
+        stroke: EXCL_COLOR,
+        strokeWidth: 1.5,
+        selectable: false,
+        evented: false,
+        _type: "excl",
+      });
+      c.add(poly);
+      c.renderAll();
+    }
     setCurrentExcl([]);
   }, [currentExcl, currentRoom]);
 
