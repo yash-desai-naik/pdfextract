@@ -58,8 +58,11 @@ SCALE_PATTERNS = [
     re.compile(r"scale\s*1\s*/\s*(\d+)", re.IGNORECASE),
     re.compile(r"1\s*[:\uFF1A]\s*(\d+)\s*@", re.IGNORECASE),
     re.compile(r"drawing\s+is\s+1\s*[:\uFF1A]\s*(\d+)", re.IGNORECASE),
-    re.compile(r"scale\s*[:\uFF1A]\s*1\s*/\s*(\d+)", re.IGNORECASE),
+    re.compile(r"scale\s*\\[\uFF1A]\s*1\s*/\s*(\d+)", re.IGNORECASE),
     re.compile(r"not\s+to\s+scale", re.IGNORECASE),  # negative match
+    # Bare ratios: "1:50", "1 : 100" (no keyword prefix)
+    re.compile(r"(?:^|\\s)1\s*[:：]\s*(\d+)(?:$|\\s)", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"1\s*[:：]\s*(\d+)", re.IGNORECASE),
 ]
 
 
@@ -98,7 +101,7 @@ class ScaleResolver:
         matches = []
         for pattern in SCALE_PATTERNS:
             for match in pattern.finditer(page_text):
-                if pattern == SCALE_PATTERNS[-1]:  # NOT TO SCALE
+                if pattern.groups == 0:  # NOT TO SCALE has no capture group
                     continue
                 try:
                     ratio = int(match.group(1))
