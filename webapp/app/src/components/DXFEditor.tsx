@@ -20,6 +20,11 @@ const EXCL_COLOR = "#ef4444";
 const ROOM_FILL = "rgba(16, 185, 129, 0.08)";
 const EXCL_FILL = "rgba(239, 68, 68, 0.15)";
 
+// Persist viewport across remounts (editor coming back from results)
+let _savedZoom = 1;
+let _savedPanX = 0;
+let _savedPanY = 0;
+
 let roomIdCounter = 0;
 function nextId() {
   return `room_${Date.now()}_${++roomIdCounter}`;
@@ -242,6 +247,16 @@ export default function DXFEditor({
       isPanningRef.current = false;
     });
 
+    // Restore saved viewport (zoom/pan) from previous session
+    if (_savedZoom !== 1 || _savedPanX !== 0 || _savedPanY !== 0) {
+      const vpt = c.viewportTransform!;
+      vpt[0] = _savedZoom;
+      vpt[3] = _savedZoom;
+      vpt[4] = _savedPanX;
+      vpt[5] = _savedPanY;
+      c.requestRenderAll();
+    }
+
     c.onContextMenu = () => false;
 
     const resize = () => {
@@ -249,8 +264,23 @@ export default function DXFEditor({
       c.setHeight(container.clientHeight);
       c.renderAll();
     };
+    // Track zoom/pan for persistence
+    c.on("mouse:wheel", () => {
+      const vpt = c.viewportTransform!;
+      _savedZoom = vpt[0];
+      _savedPanX = vpt[4];
+      _savedPanY = vpt[5];
+    });
+
     window.addEventListener("resize", resize);
     return () => {
+      // Save viewport before unmount
+      const vpt = c.viewportTransform;
+      if (vpt) {
+        _savedZoom = vpt[0];
+        _savedPanX = vpt[4];
+        _savedPanY = vpt[5];
+      }
       window.removeEventListener("resize", resize);
       c.dispose();
       fabricRef.current = null;
@@ -424,16 +454,6 @@ export default function DXFEditor({
       "rooms, coords:",
       rooms[0]?.vertices.slice(0, 2),
     );
-    // Draw a test point to confirm canvas is working
-    const test = new fabric.Circle({
-      left: 100,
-      top: 100,
-      radius: 20,
-      fill: "red",
-      selectable: false,
-      evented: false,
-    });
-    c.add(test);
     drawRooms(c, rooms);
   }, [rooms, drawRooms]);
 
