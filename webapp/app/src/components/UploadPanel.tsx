@@ -149,7 +149,9 @@ export default function UploadPanel({ onComplete, onError }: Props) {
                 <span className="loading-dot w-2 h-2 rounded-full bg-brand" />
                 <span className="loading-dot w-2 h-2 rounded-full bg-brand" />
               </div>
-              <span className="text-sm text-slate-400">Converting PDF...</span>
+              <span className="text-sm text-slate-400">
+                Loading your design...
+              </span>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3">
