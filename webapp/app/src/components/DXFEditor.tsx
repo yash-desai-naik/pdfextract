@@ -86,9 +86,9 @@ export default function DXFEditor({
     // metres → DXF mm → viewBox Y (negated)
     const mmX = mx * 1000;
     const mmY = -my * 1000; // negate Y-up back to SVG Y-down
-    // viewBox coordinate → SVG pixel
-    const svgPx = ((mmX - xmin) / fitScale) * 1 + offX;
-    const svgPy = ((mmY - ymin_vb) / fitScale) * 1 + offY;
+    // viewBox coordinate → SVG pixel (inverse of pixelToMetres)
+    const svgPx = (mmX - xmin) * fitScale + offX;
+    const svgPy = (mmY - ymin_vb) * fitScale + offY;
     // SVG pixel → canvas pixel
     const cpx = (svgPx / SVG_RENDER_W) * c.width!;
     const cpy = (svgPy / SVG_RENDER_H) * c.height!;
