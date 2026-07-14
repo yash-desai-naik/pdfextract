@@ -169,6 +169,9 @@ export default function DXFEditor({
             return { ...room, vertices: [...room.vertices, ptPx] };
           });
         } else if (m === "exclusion") {
+          if (!currentRoomRef.current) {
+            setCurrentRoom({ vertices: [], exclusions: [] });
+          }
           setCurrentExcl((prev) => [...prev, ptPx]);
         }
       } else if (opt.e.button === 2) {
