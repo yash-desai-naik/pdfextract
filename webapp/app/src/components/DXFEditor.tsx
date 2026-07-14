@@ -51,20 +51,21 @@ export default function DXFEditor({
   // SVG has viewBox="xmin ymin vw vh" rendered at SVG_RENDER_W × SVG_RENDER_H
   // with default preserveAspectRatio="xMidYMid meet"
   const pixelToMetres = (px: number, py: number): [number, number] => {
-    const [xmin, ymin, xmax, ymax] = bounds;
+    const [xmin, ymin_raw, xmax, ymax_raw] = bounds;
     const vw = xmax - xmin;
-    const vh = ymax - ymin;
+    const vh = ymax_raw - ymin_raw;
+    // SVG viewBox negates Y: ymin_vb = -ymax_raw
+    const ymin_vb = -ymax_raw;
     const fitScale = Math.min(SVG_RENDER_W / vw, SVG_RENDER_H / vh);
     const offX = (SVG_RENDER_W - vw * fitScale) / 2;
     const offY = (SVG_RENDER_H - vh * fitScale) / 2;
-    // canvas pixel → SVG render pixel (stretched to fill canvas)
     const c = fabricRef.current!;
     const svgPx = (px / c.width!) * SVG_RENDER_W;
     const svgPy = (py / c.height!) * SVG_RENDER_H;
-    // SVG viewBox Y is negated (DXF Y-up → SVG Y-down), negate back
+    // Map to SVG viewBox coordinates (negated Y space)
     const viewX = xmin + (svgPx - offX) / fitScale;
-    const viewY = ymin + (svgPy - offY) / fitScale;
-    // Negate Y to get back to DXF Y-up, then mm → m
+    const viewY = ymin_vb + (svgPy - offY) / fitScale;
+    // viewY is in SVG negated space → negate back to DXF Y-up, mm → m
     return [viewX / 1000, -viewY / 1000];
   };
 
