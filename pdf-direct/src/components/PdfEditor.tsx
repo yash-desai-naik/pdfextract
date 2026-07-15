@@ -50,6 +50,8 @@ function CanvasContent({
   pdfReady,
   renderTick,
   reRender,
+  pageWidth,
+  pageHeight,
   mode,
   areas,
   currentPts,
@@ -66,21 +68,21 @@ function CanvasContent({
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const cursorPos = useRef<[number, number] | null>(null);
-  const lastRenderZoom = useRef(1.5);
+  const lastRenderZoom = useRef(2);
 
-  // Re-render PDF at higher resolution when zoomed in
+  // Re-render PDF at higher resolution when zoomed in significantly
   useEffect(() => {
-    const targetScale = 1.5 * scale;
+    const targetScale = 2 * scale;
     const ratio = targetScale / lastRenderZoom.current;
-    // Re-render when zoom changes by >30% or drops below 1x
-    if (ratio < 0.7 || ratio > 1.3 || targetScale < 1) {
-      lastRenderZoom.current = Math.max(targetScale, 1.5);
+    // Only re-render when zoom changes by >60%
+    if (ratio < 0.4 || ratio > 1.6) {
+      lastRenderZoom.current = Math.max(targetScale, 2);
       reRender(lastRenderZoom.current);
     }
   }, [scale, reRender]);
 
-  const natW = pdfCacheRef.current?.width || 1200;
-  const natH = pdfCacheRef.current?.height || 1600;
+  const natW = pageWidth || pdfCacheRef.current?.width || 1600;
+  const natH = pageHeight || pdfCacheRef.current?.height || 2200;
 
   // Convert screen coords (relative to canvas rect) → content coords
   // getBoundingClientRect() already accounts for the CSS transform,
@@ -325,13 +327,18 @@ function CanvasContent({
 
 // ---- Outer component with TransformWrapper ----
 export default function PdfEditor(props: Props) {
-  const { pdfCacheRef, pdfReady, mode, calibration, onSetKnownLength } = props;
+  const {
+    pdfCacheRef,
+    pdfReady,
+    pageWidth,
+    pageHeight,
+    mode,
+    calibration,
+    onSetKnownLength,
+  } = props;
   const [zoom, setZoom] = useState(1);
 
-  // Wait for PDF to finish loading so canvas dimensions match PDF exactly
-  const natW = pdfCacheRef.current?.width || 0;
-  const natH = pdfCacheRef.current?.height || 0;
-  const hasPdf = pdfReady && natW > 0 && natH > 0;
+  const hasPdf = pdfReady && pageWidth > 0 && pageHeight > 0;
 
   return (
     <div className="h-full flex flex-col">

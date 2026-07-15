@@ -9,19 +9,17 @@ export function usePdf() {
   const pdfCacheRef = useRef<HTMLCanvasElement | null>(null);
   const docRef = useRef<any>(null);
   const renderTaskRef = useRef<any>(null);
-  const renderScaleRef = useRef(1.5); // track last rendered scale
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pageWidth, setPageWidth] = useState(0);
-  const [pageHeight, setPageHeight] = useState(0);
   const [pdfReady, setPdfReady] = useState(false);
-  const [renderTick, setRenderTick] = useState(0); // bump to trigger redraw
+  const [renderTick, setRenderTick] = useState(0);
+  // Fixed base dimensions — set once on first render, never change
+  const [baseW, setBaseW] = useState(0);
+  const [baseH, setBaseH] = useState(0);
 
   const renderPage = useCallback(async (scale: number) => {
     const page = docRef.current;
     if (!page) return;
-    renderScaleRef.current = scale;
     const viewport = page.getViewport({ scale });
 
     if (!pdfCacheRef.current) {
@@ -30,8 +28,10 @@ export function usePdf() {
     const cache = pdfCacheRef.current;
     cache.width = viewport.width;
     cache.height = viewport.height;
-    setPageWidth(viewport.width);
-    setPageHeight(viewport.height);
+
+    // Store base dimensions on first render only
+    setBaseW((prev) => (prev === 0 ? viewport.width : prev));
+    setBaseH((prev) => (prev === 0 ? viewport.height : prev));
 
     if (renderTaskRef.current) {
       try {
@@ -53,11 +53,13 @@ export function usePdf() {
       setLoading(true);
       setError(null);
       setPdfReady(false);
+      setBaseW(0);
+      setBaseH(0);
       try {
         const buffer = await file.arrayBuffer();
         const doc = await pdfjs.getDocument({ data: buffer }).promise;
         docRef.current = await doc.getPage(1);
-        await renderPage(1.5);
+        await renderPage(2);
         setPdfReady(true);
       } catch (e: any) {
         setError(e.message || "Failed to load PDF");
@@ -70,7 +72,6 @@ export function usePdf() {
 
   const reRender = useCallback(
     (targetScale: number) => {
-      // Clamp to reasonable bounds
       const s = Math.min(Math.max(targetScale, 0.3), 20);
       renderPage(s);
     },
@@ -83,8 +84,8 @@ export function usePdf() {
     loading,
     error,
     loadPdf,
-    pageWidth,
-    pageHeight,
+    pageWidth: baseW,
+    pageHeight: baseH,
     pdfReady,
     renderTick,
     reRender,
