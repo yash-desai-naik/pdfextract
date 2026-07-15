@@ -26,8 +26,7 @@ export function useDrawing(pxPerMetre: number) {
   }, []);
 
   const finishArea = useCallback(
-    (type: "room" | "exclusion") => {
-      // Guard against double-finish (React StrictMode, double events)
+    (type: "room" | "exclusion", customName?: string) => {
       if (finishingRef.current) return;
       finishingRef.current = true;
       setTimeout(() => {
@@ -43,12 +42,15 @@ export function useDrawing(pxPerMetre: number) {
       const perimeterM = perimPx / pxPerMetre;
       const dims = polygonDimensions(pts, pxPerMetre);
 
+      let name = customName;
+      if (!name) {
+        const count = areas.filter((a) => a.type === type).length + 1;
+        name = type === "room" ? `Room ${count}` : `Exclusion ${count}`;
+      }
+
       const newArea: MarkedArea = {
         id: nextId(),
-        name:
-          type === "room"
-            ? `Room ${areas.length + 1}`
-            : `Exclusion ${areas.length + 1}`,
+        name,
         type,
         vertices: pts,
         areaPx,
@@ -57,7 +59,6 @@ export function useDrawing(pxPerMetre: number) {
         dimensions: dims,
       };
 
-      // Track exclusion parent room
       if (type === "exclusion") {
         const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
         const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
@@ -66,7 +67,7 @@ export function useDrawing(pxPerMetre: number) {
             area.type === "room" &&
             pointInPolygonSimple(cx, cy, area.vertices)
           ) {
-            newArea.name = `${area.name} - exclusion`;
+            newArea.name = `${area.name} - ${name}`;
             break;
           }
         }

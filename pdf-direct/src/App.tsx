@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Sun, Moon } from "lucide-react";
 import { usePdf } from "./hooks/usePdf";
 import { useCalibration } from "./hooks/useCalibration";
@@ -58,7 +58,10 @@ export default function App() {
     document.body.classList.toggle("light", light);
     localStorage.setItem("theme", light ? "light" : "dark");
   }, [light]);
-  const [calAreaPts, setCalAreaPts] = useState<number[][] | null>(null); // triggers area calibration modal
+  const [calAreaPts, setCalAreaPts] = useState<number[][] | null>(null);
+  const [pendingName, setPendingName] = useState<{
+    type: "room" | "exclusion";
+  } | null>(null);
 
   const handleFile = useCallback(
     (file: File) => {
@@ -138,17 +141,30 @@ export default function App() {
   ]);
 
   const handleFinish = useCallback(() => {
-    if (mode === "exclusion") {
-      finishArea("exclusion");
-    } else if (mode === "calibrate-area") {
+    if (mode === "calibrate-area") {
       if (currentPts.length >= 3) {
         setCalAreaPts([...currentPts]);
         clearPoints();
       }
-    } else {
-      finishArea("room");
+    } else if (currentPts.length >= 3) {
+      // Show naming modal for room/exclusion
+      setPendingName({ type: mode === "exclusion" ? "exclusion" : "room" });
     }
-  }, [mode, finishArea, currentPts, undoPoint]);
+  }, [mode, currentPts, clearPoints]);
+
+  const handleNameConfirm = useCallback(
+    (name: string) => {
+      if (pendingName) {
+        finishArea(pendingName.type, name || undefined);
+        setPendingName(null);
+      }
+    },
+    [pendingName, finishArea],
+  );
+
+  const handleNameCancel = useCallback(() => {
+    setPendingName(null);
+  }, []);
 
   const handleConfirmCalArea = useCallback(
     (m2: number) => {
@@ -283,6 +299,75 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Name modal for room/exclusion */}
+      {pendingName && (
+        <NameModal
+          defaultName={
+            pendingName.type === "room"
+              ? `Room ${areas.filter((a) => a.type === "room").length + 1}`
+              : `Exclusion ${areas.filter((a) => a.type === "exclusion").length + 1}`
+          }
+          onConfirm={handleNameConfirm}
+          onCancel={handleNameCancel}
+        />
+      )}
+    </div>
+  );
+}
+
+function NameModal({
+  defaultName,
+  onConfirm,
+  onCancel,
+}: {
+  defaultName: string;
+  onConfirm: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [val, setVal] = useState(defaultName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-30">
+      <div className="bg-slate-800 border border-slate-600 rounded-xl p-6 shadow-2xl w-80 animate-fade-in">
+        <h3 className="text-sm font-semibold text-slate-100 mb-1">
+          Name this area
+        </h3>
+        <p className="text-xs text-slate-400 mb-4">
+          Enter a name for this area:
+        </p>
+        <input
+          ref={inputRef}
+          type="text"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onConfirm(val);
+            if (e.key === "Escape") onCancel();
+          }}
+          className="bg-slate-700 text-sm text-slate-100 px-3 py-2 rounded-lg border border-slate-600 outline-none w-full font-mono mb-4"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => onCancel()}
+            className="text-xs text-slate-400 px-3 py-2 rounded-lg hover:bg-slate-700/50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(val)}
+            className="bg-brand text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors"
+          >
+            OK
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
