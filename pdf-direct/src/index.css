@@ -39,7 +39,7 @@ body.light .bg-slate-800 {
     background-color: #ffffff !important;
 }
 body.light .bg-slate-800\/30 {
-    background-color: rgba(255, 255, 255, 0.3) !important;
+    background-color: #f1f5f9 !important;
 }
 body.light .bg-slate-800\/50 {
     background-color: rgba(255, 255, 255, 0.5) !important;

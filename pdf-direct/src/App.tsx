@@ -168,6 +168,17 @@ export default function App() {
     setPendingName(null);
   }, []);
 
+  // Escape key → undo last point / cancel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && appMode === "editor") {
+        handleUndo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [appMode, handleUndo]);
+
   const handleConfirmCalArea = useCallback(
     (m2: number) => {
       // Pass the drawn polygon vertices explicitly so computeScale can use them
