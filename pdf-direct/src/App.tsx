@@ -177,13 +177,13 @@ export default function App() {
   // Escape key → undo last point / cancel
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && appMode === "editor") {
-        handleUndo();
+      if (e.key === "Escape" && appMode === "editor" && currentPts.length > 0) {
+        clearPoints();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [appMode, handleUndo]);
+  }, [appMode, currentPts.length, clearPoints]);
 
   const handleConfirmCalArea = useCallback(
     (m2: number) => {
@@ -280,7 +280,7 @@ export default function App() {
               hasCalibration={calibration.pxPerMetre > 0}
             />
             <div className="flex-1 flex overflow-hidden">
-              <div className="flex-1 relative">
+              <div className="flex-1 relative overflow-hidden">
                 <PdfEditor
                   canvasRef={canvasRef}
                   pdfCacheRef={pdfCacheRef}
