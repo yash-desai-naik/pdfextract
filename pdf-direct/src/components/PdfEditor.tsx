@@ -350,8 +350,8 @@ export default function PdfEditor(props: Props) {
             initialScale={1}
             minScale={0.1}
             maxScale={50}
-            wheel={{ step: 0.08 }}
-            pinch={{ step: 0.05 }}
+            wheel={{ step: 0.03 }}
+            pinch={{ step: 0.02 }}
             doubleClick={{ disabled: true }}
             onTransform={(_ref: any, event: any) => setZoom(event.scale || 1)}
             limitToBounds={false}
