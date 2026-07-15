@@ -5,6 +5,7 @@ import {
   Ruler,
   Square,
   Undo2,
+  Redo,
   Check,
   Calculator,
   RotateCcw,
@@ -15,6 +16,8 @@ interface Props {
   mode: ToolMode;
   onModeChange: (m: ToolMode) => void;
   onUndo: () => void;
+  onRedo: () => void;
+  canRedo: boolean;
   onFinish: () => void;
   onCalculate: () => void;
   calibrating: boolean;
@@ -30,6 +33,8 @@ export default function Toolbar({
   mode,
   onModeChange,
   onUndo,
+  onRedo,
+  canRedo,
   onFinish,
   onCalculate,
   calibrating,
@@ -78,6 +83,14 @@ export default function Toolbar({
       >
         <Undo2 className="w-3.5 h-3.5" strokeWidth={1.5} />
         <span>Undo</span>
+      </button>
+      <button
+        onClick={onRedo}
+        disabled={!canRedo}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        <Redo className="w-3.5 h-3.5" strokeWidth={1.5} />
+        <span>Redo</span>
       </button>
 
       <div className="flex-1" />

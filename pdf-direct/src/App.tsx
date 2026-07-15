@@ -43,6 +43,8 @@ export default function App() {
     currentPts,
     addPoint,
     undoPoint,
+    redoPoint,
+    canRedo,
     clearPoints,
     finishArea,
     removeArea,
@@ -154,6 +156,10 @@ export default function App() {
     }
   }, [mode, currentPts, clearPoints]);
 
+  const handleRedo = useCallback(() => {
+    redoPoint();
+  }, [redoPoint]);
+
   const handleNameConfirm = useCallback(
     (name: string) => {
       if (pendingName) {
@@ -261,6 +267,8 @@ export default function App() {
               mode={mode}
               onModeChange={handleModeChange}
               onUndo={handleUndo}
+              onRedo={handleRedo}
+              canRedo={canRedo}
               onFinish={handleFinish}
               onCalculate={handleCalculate}
               calibrating={!!(calibration.point1 && !calibration.point2)}

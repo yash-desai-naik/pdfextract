@@ -11,14 +11,29 @@ export function useDrawing(pxPerMetre: number) {
   const [mode, setMode] = useState<ToolMode>("pan");
   const [areas, setAreas] = useState<MarkedArea[]>([]);
   const [currentPts, setCurrentPts] = useState<number[][]>([]);
+  const [redoStack, setRedoStack] = useState<number[][]>([]);
   const finishingRef = useRef(false);
 
   const addPoint = useCallback((pt: [number, number]) => {
     setCurrentPts((prev) => [...prev, pt]);
+    setRedoStack([]); // new action clears redo
   }, []);
 
   const undoPoint = useCallback(() => {
-    setCurrentPts((prev) => prev.slice(0, -1));
+    setCurrentPts((prev) => {
+      if (prev.length === 0) return prev;
+      setRedoStack((r) => [prev[prev.length - 1], ...r]);
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const redoPoint = useCallback(() => {
+    setRedoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const [pt, ...rest] = prev;
+      setCurrentPts((c) => [...c, pt]);
+      return rest;
+    });
   }, []);
 
   const clearPoints = useCallback(() => {
@@ -75,6 +90,7 @@ export function useDrawing(pxPerMetre: number) {
 
       setAreas((prev) => [...prev, newArea]);
       setCurrentPts([]);
+      setRedoStack([]);
     },
     [currentPts, pxPerMetre, areas],
   );
@@ -90,6 +106,7 @@ export function useDrawing(pxPerMetre: number) {
   const reset = useCallback(() => {
     setAreas([]);
     setCurrentPts([]);
+    setRedoStack([]);
   }, []);
 
   return {
@@ -99,6 +116,8 @@ export function useDrawing(pxPerMetre: number) {
     currentPts,
     addPoint,
     undoPoint,
+    redoPoint,
+    canRedo: redoStack.length > 0,
     clearPoints,
     finishArea,
     removeArea,
