@@ -22,6 +22,8 @@ export default function App() {
     pageWidth,
     pageHeight,
     pdfReady,
+    renderTick,
+    reRender,
   } = usePdf();
   const {
     calibration,
@@ -264,6 +266,8 @@ export default function App() {
                   canvasRef={canvasRef}
                   pdfCacheRef={pdfCacheRef}
                   pdfReady={pdfReady}
+                  renderTick={renderTick}
+                  reRender={reRender}
                   pageWidth={pageWidth}
                   pageHeight={pageHeight}
                   mode={mode}

@@ -13,6 +13,8 @@ interface Props {
   pageWidth: number;
   pageHeight: number;
   pdfReady: boolean;
+  renderTick: number;
+  reRender: (scale: number) => void;
   mode: ToolMode;
   areas: MarkedArea[];
   currentPts: number[][];
@@ -46,6 +48,8 @@ const EXCL_FILL = "rgba(239, 68, 68, 0.15)";
 function CanvasContent({
   pdfCacheRef,
   pdfReady,
+  renderTick,
+  reRender,
   mode,
   areas,
   currentPts,
@@ -62,8 +66,19 @@ function CanvasContent({
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const cursorPos = useRef<[number, number] | null>(null);
+  const lastRenderZoom = useRef(1.5);
 
-  // Derive natural canvas size from PDF cache
+  // Re-render PDF at higher resolution when zoomed in
+  useEffect(() => {
+    const targetScale = 1.5 * scale;
+    const ratio = targetScale / lastRenderZoom.current;
+    // Re-render when zoom changes by >30% or drops below 1x
+    if (ratio < 0.7 || ratio > 1.3 || targetScale < 1) {
+      lastRenderZoom.current = Math.max(targetScale, 1.5);
+      reRender(lastRenderZoom.current);
+    }
+  }, [scale, reRender]);
+
   const natW = pdfCacheRef.current?.width || 1200;
   const natH = pdfCacheRef.current?.height || 1600;
 
@@ -202,7 +217,16 @@ function CanvasContent({
       ctx.lineTo(cp[0], cp[1] + r + 4);
       ctx.stroke();
     }
-  }, [areas, currentPts, calibration, pdfCacheRef, pdfReady, scale, cursorPos]);
+  }, [
+    areas,
+    currentPts,
+    calibration,
+    pdfCacheRef,
+    pdfReady,
+    scale,
+    cursorPos,
+    renderTick,
+  ]);
 
   useEffect(() => {
     draw();
