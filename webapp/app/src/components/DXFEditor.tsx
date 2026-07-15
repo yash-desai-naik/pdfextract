@@ -56,6 +56,11 @@ export default function DXFEditor({
   );
   const [selectedLayers, setSelectedLayers] = useState<Set<string>>(new Set());
   const [showLayers, setShowLayers] = useState(false);
+  const [calFactor, setCalFactor] = useState<number | null>(null);
+  const calFactorRef = useRef<number | null>(null);
+  const [calibrating, setCalibrating] = useState(false);
+  const calibratingRef = useRef(false);
+  const calPointA = useRef<[number, number] | null>(null);
   const roomsRef = useRef(rooms);
   roomsRef.current = rooms;
   const SVG_RENDER_W = 2000;
@@ -92,6 +97,12 @@ export default function DXFEditor({
         result[0].toFixed(3),
         result[1].toFixed(3),
       );
+    }
+    // Apply user calibration factor
+    const cf = calFactorRef.current;
+    if (cf !== null && cf !== 1.0) {
+      result[0] *= cf;
+      result[1] *= cf;
     }
     return result;
   };
@@ -181,7 +192,51 @@ export default function DXFEditor({
           return;
         }
         if (m === "select") return;
-        if (m === "freeform") return; // freeform uses path:pathcreated instead
+        if (m === "freeform") return;
+        if (m === "pan") return;
+        if (m === "select") return;
+
+        // Calibrate mode: click two points, then enter real distance
+        if (calibratingRef.current) {
+          const ptr = c.getPointer(opt.e);
+          if (!calPointA.current) {
+            calPointA.current = [ptr.x, ptr.y];
+            console.log("[cal] Point A:", ptr.x, ptr.y);
+          } else {
+            const [ax, ay] = calPointA.current;
+            const dx = ptr.x - ax;
+            const dy = ptr.y - ay;
+            const pixelDist = Math.sqrt(dx * dx + dy * dy);
+            const realDistMm = prompt("Enter real-world distance (mm):");
+            if (
+              realDistMm &&
+              !isNaN(Number(realDistMm)) &&
+              Number(realDistMm) > 0
+            ) {
+              // Current pixelToMetres distance for these two pixels
+              const [mx1, my1] = pixelToMetres(ax, ay);
+              const [mx2, my2] = pixelToMetres(ptr.x, ptr.y);
+              const metreDist = Math.sqrt((mx2 - mx1) ** 2 + (my2 - my1) ** 2);
+              const realDistM = Number(realDistMm) / 1000;
+              const factor = realDistM / metreDist;
+              setCalFactor(factor);
+              calFactorRef.current = factor;
+              console.log(
+                "[cal] Factor:",
+                factor,
+                "(pixelDist:",
+                pixelDist.toFixed(0),
+                "px, metreDist:",
+                metreDist.toFixed(3),
+                "m)",
+              );
+            }
+            calPointA.current = null;
+            setCalibrating(false);
+            calibratingRef.current = false;
+          }
+          return;
+        }
 
         const pointer = c.getPointer(opt.e);
         const ptPx: [number, number] = [pointer.x, pointer.y];
@@ -599,6 +654,26 @@ export default function DXFEditor({
           roomCount={rooms.length}
           totalArea={totalArea}
         />
+        <button
+          onClick={() => {
+            if (calibrating) {
+              setCalibrating(false);
+              calPointA.current = null;
+            } else setCalibrating(true);
+          }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all shrink-0 mr-1 ${
+            calibrating
+              ? "bg-warning/20 text-warning animate-pulse"
+              : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+          }`}
+          title="Calibrate scale by clicking two known points"
+        >
+          {calibrating
+            ? "⚡ Click 2 points..."
+            : calFactor
+              ? `Cal ${calFactor.toFixed(3)}`
+              : "Calibrate"}
+        </button>
         <button
           onClick={() => setShowLayers(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-all shrink-0 mr-1"
