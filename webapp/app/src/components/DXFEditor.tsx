@@ -186,17 +186,7 @@ export default function DXFEditor({
     c.on("mouse:down", (opt) => {
       const m = modeRef.current;
       if (opt.e.button === 0) {
-        if (m === "pan") {
-          isPanningRef.current = true;
-          panStart.current = { x: opt.e.clientX, y: opt.e.clientY };
-          return;
-        }
-        if (m === "select") return;
-        if (m === "freeform") return;
-        if (m === "pan") return;
-        if (m === "select") return;
-
-        // Calibrate mode: click two points, then enter real distance
+        // Calibrate takes priority
         if (calibratingRef.current) {
           const ptr = c.getPointer(opt.e);
           if (!calPointA.current) {
