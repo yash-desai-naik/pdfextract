@@ -656,10 +656,14 @@ export default function DXFEditor({
         />
         <button
           onClick={() => {
-            if (calibrating) {
+            if (calibratingRef.current) {
               setCalibrating(false);
+              calibratingRef.current = false;
               calPointA.current = null;
-            } else setCalibrating(true);
+            } else {
+              setCalibrating(true);
+              calibratingRef.current = true;
+            }
           }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all shrink-0 mr-1 ${
             calibrating
