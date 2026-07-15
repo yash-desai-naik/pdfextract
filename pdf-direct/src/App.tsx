@@ -50,10 +50,13 @@ export default function App() {
 
   const [appMode, setAppMode] = useState<AppMode>("upload");
   const [fileName, setFileName] = useState("");
-  const [light, setLight] = useState(false);
+  const [light, setLight] = useState(
+    () => localStorage.getItem("theme") === "light",
+  );
 
   useEffect(() => {
     document.body.classList.toggle("light", light);
+    localStorage.setItem("theme", light ? "light" : "dark");
   }, [light]);
   const [calAreaPts, setCalAreaPts] = useState<number[][] | null>(null); // triggers area calibration modal
 
